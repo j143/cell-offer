@@ -1,0 +1,12 @@
+{
+  "java.configuration.updateBuildConfiguration": "automatic",
+  "java.errors.incompleteClasspath.severity": "warning",
+  "java.configuration.checkProjectSettingsExclusions": false,
+  "java.format.settings.url": "",
+  "java.format.settings.profile": "",
+  "java.import.gradle.enabled": false,
+  "java.import.maven.enabled": true,
+  "java.project.referencedLibraries": [
+    "lib/**/*.jar"
+  ]
+}
