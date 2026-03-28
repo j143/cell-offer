@@ -1,0 +1,101 @@
+syntax = "proto3";
+
+package push;
+
+option java_package = "j143.github.push.proto";
+option java_outer_classname = "PushServiceProto";
+option java_multiple_files = true;
+
+// ---------------------------------------------------------------------------
+// Bidirectional stream messages (client ↔ server)
+// ---------------------------------------------------------------------------
+
+// First message sent by a client when it opens a ConnectStream.
+message ClientHello {
+  string user_id       = 1;
+  string device_id     = 2;
+  int64  last_ack_seq_id = 3;  // resume point; 0 = fresh connection
+}
+
+// Application-level acknowledgement sent by the client after processing a push.
+message ClientAck {
+  int64 seq_id = 1;
+}
+
+// Heartbeat sent by the client (optionally carrying RTT measurement).
+message ClientHeartbeat {
+  int64 rtt_ms = 1;
+}
+
+// Wrapper for all messages that flow from client → server.
+message ClientToServer {
+  oneof payload {
+    ClientHello     hello     = 1;
+    ClientAck       ack       = 2;
+    ClientHeartbeat heartbeat = 3;
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+// A push message delivered from server → client.
+message ServerPush {
+  int64  seq_id        = 1;
+  string user_id       = 2;
+  bytes  payload_bytes = 3;
+  int64  ttl_ms        = 4;
+  int32  priority      = 5;
+}
+
+// Control signal from server → client (e.g. resume, resync, error).
+message ServerControl {
+  enum Type {
+    UNKNOWN         = 0;
+    RESUME_FROM_SEQ = 1;
+    FULL_RESYNC     = 2;
+    ERROR           = 3;
+  }
+  Type   type              = 1;
+  int64  last_known_seq_id = 2;
+  string message           = 3;
+}
+
+// Heartbeat sent by the server; client responds with ClientHeartbeat.
+message ServerHeartbeat {}
+
+// Wrapper for all messages that flow from server → client.
+message ServerToClient {
+  oneof payload {
+    ServerPush      push      = 1;
+    ServerControl   control   = 2;
+    ServerHeartbeat heartbeat = 3;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SendPush (producer → PushGateway)
+// ---------------------------------------------------------------------------
+
+message SendPushRequest {
+  string user_id       = 1;
+  bytes  payload_bytes = 2;
+  int64  ttl_ms        = 3;
+  int32  priority      = 4;
+}
+
+message SendPushResponse {
+  bool   success = 1;
+  string reason  = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Service definition
+// ---------------------------------------------------------------------------
+
+service PushService {
+  // Bidirectional stream between a client (driver/rider) and PushGateway.
+  rpc ConnectStream (stream ClientToServer) returns (stream ServerToClient);
+
+  // Unary RPC used by producers (cell-offer service) to push a message.
+  rpc SendPush (SendPushRequest) returns (SendPushResponse);
+}
