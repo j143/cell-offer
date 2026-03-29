@@ -56,7 +56,18 @@ public class MessageStore {
      * @return the assigned sequence-id, or -1 if the message was dropped
      */
     public long enqueue(String userId, byte[] payload, Duration ttl, int priority) {
-        UserQueue uq = userQueues.computeIfAbsent(userId, UserQueue::new);
+        UserQueue uq = userQueues.computeIfAbsent(userId, uid -> {
+            UserQueue newUq = new UserQueue(uid);
+            // Register gauge exactly once per user when the queue is first created.
+            // Placing this inside computeIfAbsent guarantees single registration even
+            // under concurrent callers, which prevents the OOM caused by duplicate
+            // Micrometer gauge registrations.
+            meterRegistry.gauge("push_queue_depth",
+                    java.util.List.of(io.micrometer.core.instrument.Tag.of("userId", uid)),
+                    newUq,
+                    q -> { synchronized (q.queue) { return q.queue.size(); } });
+            return newUq;
+        });
 
         PendingMessage msg = new PendingMessage(
                 uq.nextSeqId.incrementAndGet(), userId, payload, ttl, priority);
@@ -103,13 +114,18 @@ public class MessageStore {
     }
 
     /**
-     * Returns up to {@code limit} non-expired messages for delivery, removing
-     * them from the queue. Expired messages are silently discarded and counted.
+     * Returns up to {@code limit} non-expired messages ready for delivery.
+     *
+     * <p><strong>At-Least-Once guarantee:</strong> this method is intentionally
+     * <em>read-only</em> for live messages. A message is only removed from the
+     * store when the server receives an explicit {@code ClientAck} and
+     * {@link #pruneAcked} is called. Expired messages are evicted eagerly
+     * because they will never reach a client and do not require acknowledgement.
      *
      * @param userId target user
      * @param now    reference instant for TTL check
      * @param limit  maximum number of messages to return per call
-     * @return ordered list of messages ready for delivery
+     * @return ordered list of messages ready for delivery (still in the store)
      */
     public List<PendingMessage> pollDueMessages(String userId, Instant now, int limit) {
         UserQueue uq = userQueues.get(userId);
@@ -121,12 +137,13 @@ public class MessageStore {
             Iterator<PendingMessage> it = uq.queue.iterator();
             while (it.hasNext() && result.size() < limit) {
                 PendingMessage msg = it.next();
-                it.remove();
                 if (msg.isExpired(now)) {
+                    it.remove(); // expired: safe to discard immediately, no ack needed
                     meterRegistry.counter("push_messages_expired_total", "userId", userId).increment();
                     log.debug("[MessageStore] Expired seqId={} for user={}", msg.getSeqId(), userId);
                 } else {
                     result.add(msg);
+                    // do NOT remove: message stays in store until pruneAcked() confirms delivery
                 }
             }
         }
@@ -147,13 +164,6 @@ public class MessageStore {
 
     private void recordEnqueued(String userId) {
         meterRegistry.counter("push_messages_enqueued_total", "userId", userId).increment();
-        // Update gauge for queue depth
-        meterRegistry.gauge("push_queue_depth", List.of(
-                io.micrometer.core.instrument.Tag.of("userId", userId)),
-                userQueues.get(userId),
-                uq -> {
-                    synchronized (uq.queue) { return uq.queue.size(); }
-                });
     }
 
     // -----------------------------------------------------------------------

@@ -48,7 +48,8 @@ class MessageStoreTest {
         assertThat(msgs.get(0).getPriority()).isEqualTo(5);
         assertThat(msgs.get(1).getPriority()).isEqualTo(3);
         assertThat(msgs.get(2).getPriority()).isEqualTo(1);
-        assertThat(store.queueDepth("user-2")).isEqualTo(0);
+        // At-least-once: messages are NOT removed from the store until pruneAcked().
+        assertThat(store.queueDepth("user-2")).isEqualTo(3);
     }
 
     @Test
@@ -58,7 +59,8 @@ class MessageStoreTest {
         }
         List<PendingMessage> msgs = store.pollDueMessages("user-3", java.time.Instant.now(), 2);
         assertThat(msgs).hasSize(2);
-        assertThat(store.queueDepth("user-3")).isEqualTo(3);
+        // All 5 messages remain in the store; only 2 were read (not removed).
+        assertThat(store.queueDepth("user-3")).isEqualTo(5);
     }
 
     @Test
