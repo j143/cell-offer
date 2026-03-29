@@ -9,6 +9,8 @@ import j143.github.push.proto.SendPushResponse;
 import j143.github.push.proto.ServerControl;
 import j143.github.push.proto.ServerToClient;
 import j143.github.pushgateway.model.ClientSession;
+import j143.github.citrus.EvaluationContext;
+import j143.github.citrus.ExperimentClient;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -40,19 +42,27 @@ public class PushServiceImpl extends PushServiceGrpc.PushServiceImplBase {
     private final MessageStore      messageStore;
     private final Dispatcher        dispatcher;
     private final MeterRegistry     meterRegistry;
+    private final ExperimentClient  experimentClient;
     private final long              defaultTtlMillis;
+    private final int               defaultRetryAttempts;
+    private final long              defaultHeartbeatIntervalMs;
 
     public PushServiceImpl(
             ConnectionManager connectionManager,
             MessageStore messageStore,
             Dispatcher dispatcher,
             MeterRegistry meterRegistry,
-            @Value("${push.gateway.default-ttl-ms:30000}") long defaultTtlMillis) {
-        this.connectionManager = connectionManager;
-        this.messageStore      = messageStore;
-        this.dispatcher        = dispatcher;
-        this.meterRegistry     = meterRegistry;
-        this.defaultTtlMillis  = defaultTtlMillis;
+            ExperimentClient experimentClient,
+            @Value("${push.gateway.default-ttl-ms:30000}") long defaultTtlMillis,
+            @Value("${push.gateway.heartbeat-interval-ms:10000}") long defaultHeartbeatIntervalMs) {
+        this.connectionManager          = connectionManager;
+        this.messageStore               = messageStore;
+        this.dispatcher                 = dispatcher;
+        this.meterRegistry              = meterRegistry;
+        this.experimentClient           = experimentClient;
+        this.defaultTtlMillis           = defaultTtlMillis;
+        this.defaultRetryAttempts       = 3;
+        this.defaultHeartbeatIntervalMs = defaultHeartbeatIntervalMs;
 
         // Register the active_sessions gauge exactly once at construction time.
         // Previously this was registered inside handleHello() which runs on every
@@ -94,8 +104,20 @@ public class PushServiceImpl extends PushServiceGrpc.PushServiceImplBase {
                 log.info("[PushServiceImpl] ClientHello: user={} device={} resumeSeqId={}",
                         userId, deviceId, resumeSeqId);
 
+                // Evaluate experiment parameters ONCE per session (RAMEN Rule #1:
+                // Stateful Isolation). The resolved values are frozen in the
+                // ClientSession for the lifetime of this stream. Applying new
+                // experiment assignments mid-stream would violate the at-least-once
+                // delivery contract. New assignments take effect only on reconnect.
+                EvaluationContext ctx = new EvaluationContext().set("DRIVER", userId);
+                int  retryAttempts       = experimentClient.getIntParam(
+                        "ramen.retry.max-attempts", defaultRetryAttempts, ctx);
+                long heartbeatIntervalMs = experimentClient.getLongParam(
+                        "ramen.heartbeat.interval-ms", defaultHeartbeatIntervalMs, ctx);
+
                 ClientSession session = new ClientSession(
-                        userId, deviceId, outbound, resumeSeqId);
+                        userId, deviceId, outbound, resumeSeqId,
+                        retryAttempts, heartbeatIntervalMs);
                 connectionManager.registerSession(userId, session);
 
                 // Prune any already-acked messages from the queue

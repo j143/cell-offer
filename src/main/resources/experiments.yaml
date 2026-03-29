@@ -1,0 +1,33 @@
+# Citrus-lite experiment configuration
+#
+# Each entry in `experiments` defines one A/B or multivariate test.
+#
+# trafficSplits: variant-name -> bucket count (must sum to 10 000).
+#   Gives 0.01 % granularity. 5000 = 50.00 %.
+#
+# parameterOverrides: parameter-key -> (variant -> value).
+#   Two enabled experiments MUST NOT override the same parameter key;
+#   the ExperimentRegistry will throw FatalConfigException on load if they do.
+
+experiments:
+  - name: "RamenBackoffV2"
+    enabled: true
+    unitType: "DRIVER"
+    trafficSplits:
+      control:   5000   # 50.00 %
+      treatment: 5000   # 50.00 %
+    parameterOverrides:
+      ramen.retry.max-attempts:
+        control:   3
+        treatment: 10
+
+  - name: "HeartbeatIntervalTest"
+    enabled: false      # disabled – not yet launched
+    unitType: "DRIVER"
+    trafficSplits:
+      control:   7000   # 70.00 %
+      treatment: 3000   # 30.00 %
+    parameterOverrides:
+      ramen.heartbeat.interval-ms:
+        control:   10000
+        treatment: 5000

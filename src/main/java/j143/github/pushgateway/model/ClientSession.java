@@ -37,18 +37,61 @@ public class ClientSession {
     /** Updated whenever a heartbeat (or any inbound message) is received. */
     private volatile Instant lastHeartbeat;
 
+    /**
+     * Experiment-resolved retry attempts for this session.
+     * Evaluated once at {@code ClientHello} (RAMEN Rule #1: Stateful Isolation).
+     * A new value takes effect only on reconnect; never changes mid-stream.
+     */
+    private final int resolvedRetryAttempts;
+
+    /**
+     * Experiment-resolved heartbeat interval (ms) for this session.
+     * Evaluated once at {@code ClientHello} (RAMEN Rule #1: Stateful Isolation).
+     */
+    private final long resolvedHeartbeatIntervalMs;
+
+    /**
+     * Convenience constructor that uses default experiment values.
+     * Preserves backward compatibility for callers that do not inject
+     * an {@link j143.github.citrus.ExperimentClient}.
+     */
     public ClientSession(String userId, String deviceId,
                          StreamObserver<ServerToClient> outbound,
                          long resumeSeqId) {
-        this.userId        = userId;
-        this.deviceId      = deviceId;
-        this.outbound      = outbound;
-        this.lastAckSeqId  = new AtomicLong(resumeSeqId);
-        this.lastHeartbeat = Instant.now();
+        this(userId, deviceId, outbound, resumeSeqId, 3, 10_000L);
+    }
+
+    /**
+     * Full constructor that stores experiment-resolved session parameters.
+     *
+     * @param userId                    user identifier
+     * @param deviceId                  device identifier
+     * @param outbound                  gRPC response observer (not thread-safe; guarded by lock)
+     * @param resumeSeqId               last acknowledged sequence id from the client
+     * @param resolvedRetryAttempts     retry attempts resolved from experimentation engine
+     * @param resolvedHeartbeatIntervalMs heartbeat interval (ms) resolved from experimentation engine
+     */
+    public ClientSession(String userId, String deviceId,
+                         StreamObserver<ServerToClient> outbound,
+                         long resumeSeqId,
+                         int resolvedRetryAttempts,
+                         long resolvedHeartbeatIntervalMs) {
+        this.userId                    = userId;
+        this.deviceId                  = deviceId;
+        this.outbound                  = outbound;
+        this.lastAckSeqId              = new AtomicLong(resumeSeqId);
+        this.lastHeartbeat             = Instant.now();
+        this.resolvedRetryAttempts     = resolvedRetryAttempts;
+        this.resolvedHeartbeatIntervalMs = resolvedHeartbeatIntervalMs;
     }
 
     public String getUserId()   { return userId;  }
     public String getDeviceId() { return deviceId; }
+
+    /** Returns the retry attempts resolved from the experimentation engine at session creation. */
+    public int  getResolvedRetryAttempts()      { return resolvedRetryAttempts;      }
+    /** Returns the heartbeat interval (ms) resolved from the experimentation engine at session creation. */
+    public long getResolvedHeartbeatIntervalMs() { return resolvedHeartbeatIntervalMs; }
 
     /**
      * Returns the underlying {@link StreamObserver}.
