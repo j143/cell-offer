@@ -10,14 +10,17 @@ initial review.
 ## What This Service Does
 
 `cell-offer-queue-service` is a simplified implementation of Uber's **RAMEN**
-(Reliable Async Messaging with Exactly-N delivery) push-dispatch layer.
+(Reliable Async Messaging with Exactly-N delivery) push-dispatch layer, with an
+embedded experimentation engine (**Citrus-lite**) for safe A/B/N testing of
+configuration parameters.
 
-It has two parts:
+It has three parts:
 
 | Layer | Purpose |
 |---|---|
 | **Cell-offer queue** (`j143.github.celloffer`) | Per-cell bounded priority queue that enqueues `Offer` objects and flushes them to drivers |
 | **Push gateway** (`j143.github.pushgateway` / `pushclient`) | gRPC bidirectional-stream transport that delivers messages from the server to connected mobile clients with at-least-once guarantees |
+| **Citrus-lite** (`j143.github.citrus`) | Local, sub-millisecond feature-flagging and A/B/N testing engine with dynamic config reload and async exposure logging |
 
 ---
 
@@ -92,6 +95,68 @@ device CPU at 100 % and hammers the server during outages.
 
 ---
 
+## Citrus-lite Invariants (DO NOT VIOLATE)
+
+### C1. Stateful Isolation – Evaluate Once Per gRPC Stream
+
+Parameters consumed by long-lived gRPC streams (ramen-lite) must be evaluated
+**exactly once** during `ClientHello` and frozen in `ClientSession`. They must
+**not** be re-read on subsequent messages or by a background thread during the
+stream's lifetime.
+
+```java
+// PushServiceImpl.handleHello() – correct
+EvaluationContext ctx = new EvaluationContext().set("DRIVER", userId);
+int  retries   = experimentClient.getIntParam("ramen.retry.max-attempts",  3,      ctx);
+long heartbeat = experimentClient.getLongParam("ramen.heartbeat.interval-ms", 10000L, ctx);
+ClientSession session = new ClientSession(userId, deviceId, outbound, resumeSeqId,
+                                          retries, heartbeat);
+```
+
+**Why:** Applying a new experiment assignment mid-stream would silently change
+the delivery semantics of an in-flight message, violating the at-least-once
+contract and making A/B analysis impossible (units would switch cohorts).
+
+### C2. Zero-Tolerance Parameter-Key Conflict Resolution
+
+If `experiments.yaml` contains two or more **enabled** experiments that both
+declare overrides for the same parameter key, `ExperimentRegistry` must throw
+`FatalConfigException` at load time. There is no "last-applied wins" fallback.
+
+**Why:** "Last-applied wins" produces silent data corruption. Each experiment
+assumes it has sole ownership of the parameters it overrides. Allowing two
+experiments to compete over the same key makes it impossible to draw valid
+statistical conclusions from either.
+
+### C3. Deterministic Bucketing via MurmurHash3_32
+
+Traffic splits must use `ExperimentHasher.getBucket(unitId, experimentName)`
+which is based on `Hashing.murmur3_32_fixed(HASH_SEED)` from Guava. The seed
+(`104729`) is fixed and must never change.
+
+Never use `String.hashCode()`. It is not specified to be stable across JVM
+versions and produces allocation bias.
+
+**Why:** Changing the bucketing algorithm or seed mid-experiment reassigns units
+to different cohorts, invalidating all previously collected exposure data.
+
+### C4. Non-Blocking Exposure Logging
+
+`ExperimentClient.getIntParam` / `getLongParam` must **never** block the
+calling thread. Exposure events are written to a bounded
+`ArrayBlockingQueue` via the non-blocking `offer()` method.
+
+If the queue is full, the event is silently dropped and the
+`AsyncExposureLogger.droppedExposures` counter is incremented. Monitor this
+counter: a sustained non-zero value means the queue capacity or flush rate
+needs tuning.
+
+**Why:** `getParam()` is on the hot path of every request. A blocking call
+inside a gRPC handler or scheduler will stall the entire thread pool and cause
+cascading latency spikes.
+
+---
+
 ## Component Map
 
 ```
@@ -99,6 +164,7 @@ PushGatewayClient  (mobile device SDK)
        │  ConnectStream (bidi gRPC)
        ▼
 PushServiceImpl    (gRPC service impl)
+  ├── ExperimentClient.getIntParam/getLongParam (ONCE per ClientHello)
   ├── registerSession → ConnectionManager
   ├── pruneAcked      → MessageStore
   ├── setOnReadyHandler → Dispatcher.drainIfReady()
@@ -117,7 +183,22 @@ MessageStore
 
 ClientSession
   ├── writeToClient()  – serialized via ReentrantLock
-  └── completeStream() – serialized via ReentrantLock
+  ├── completeStream() – serialized via ReentrantLock
+  ├── resolvedRetryAttempts     – frozen at ClientHello from ExperimentClient
+  └── resolvedHeartbeatIntervalMs – frozen at ClientHello from ExperimentClient
+
+ExperimentClient  (Citrus-lite SDK)
+  ├── getIntParam()  – AtomicReference hot path, < 1 ms
+  ├── getLongParam() – AtomicReference hot path, < 1 ms
+  └── updateConfig() ← ExperimentsConfigLoader (every 60 s)
+
+ExperimentsConfigLoader
+  ├── @PostConstruct reload()
+  └── @Scheduled scheduledReload() (every citrus.config.poll-interval-ms)
+
+AsyncExposureLogger
+  ├── logExposure() – non-blocking offer() to ArrayBlockingQueue
+  └── flushLoop()   – daemon thread, writes JSON to citrus.exposure logger
 ```
 
 ---
@@ -133,9 +214,14 @@ Each architectural invariant has a dedicated test class:
 | StreamObserver thread-safety | `ClientSessionThreadSafetyTest` |
 | Event-driven dispatch, no polling loop | `DispatcherEventDrivenTest` |
 | Reconnect backoff correctness | `PushGatewayClientReconnectTest` |
+| MurmurHash3 determinism & distribution | `ExperimentHasherTest` |
+| Non-blocking exposure drop contract | `AsyncExposureLoggerTest` |
+| Parameter-key conflict detection | `ExperimentRegistryTest` |
+| Hot-path evaluation & variant assignment | `ExperimentClientTest` |
+| YAML loading & scheduled reload | `ExperimentsConfigLoaderTest` |
 
-When adding new features to the push gateway always add or update the
-corresponding invariant test.
+When adding new features to the push gateway or Citrus-lite, always add or
+update the corresponding invariant test.
 
 ---
 
@@ -158,3 +244,5 @@ Key configuration properties (in `application.properties`):
 | `push.gateway.heartbeat-interval-ms` | `10000` | Heartbeat cadence (ms) |
 | `push.gateway.heartbeat-timeout-ms` | `30000` | Session liveness timeout (ms) |
 | `push.gateway.default-ttl-ms` | `30000` | Default message TTL (ms) |
+| `citrus.config.path` | _(classpath)_ | Path to `experiments.yaml`; blank = classpath fallback |
+| `citrus.config.poll-interval-ms` | `60000` | How often to re-read the config file (ms) |
