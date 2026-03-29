@@ -9,6 +9,7 @@ import j143.github.push.proto.SendPushResponse;
 import j143.github.push.proto.ServerControl;
 import j143.github.push.proto.ServerToClient;
 import j143.github.pushgateway.model.ClientSession;
+import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
@@ -37,18 +38,28 @@ public class PushServiceImpl extends PushServiceGrpc.PushServiceImplBase {
 
     private final ConnectionManager connectionManager;
     private final MessageStore      messageStore;
+    private final Dispatcher        dispatcher;
     private final MeterRegistry     meterRegistry;
     private final long              defaultTtlMillis;
 
     public PushServiceImpl(
             ConnectionManager connectionManager,
             MessageStore messageStore,
+            Dispatcher dispatcher,
             MeterRegistry meterRegistry,
             @Value("${push.gateway.default-ttl-ms:30000}") long defaultTtlMillis) {
         this.connectionManager = connectionManager;
         this.messageStore      = messageStore;
+        this.dispatcher        = dispatcher;
         this.meterRegistry     = meterRegistry;
         this.defaultTtlMillis  = defaultTtlMillis;
+
+        // Register the active_sessions gauge exactly once at construction time.
+        // Previously this was registered inside handleHello() which runs on every
+        // device connection, causing duplicate Micrometer gauge registrations and
+        // eventual OOM inside the metrics registry.
+        meterRegistry.gauge("active_sessions", connectionManager,
+                ConnectionManager::activeSessionCount);
     }
 
     // -----------------------------------------------------------------------
@@ -92,8 +103,16 @@ public class PushServiceImpl extends PushServiceGrpc.PushServiceImplBase {
                     messageStore.pruneAcked(userId, resumeSeqId);
                 }
 
-                meterRegistry.gauge("active_sessions", connectionManager,
-                        ConnectionManager::activeSessionCount);
+                // Register an onReadyHandler so gRPC signals us when the client's
+                // TCP window has space, replacing the old 50 ms polling loop.
+                // This gives us native backpressure: we only attempt to send data
+                // when the network is confirmed to be able to accept it.
+                if (outbound instanceof ServerCallStreamObserver) {
+                    @SuppressWarnings("unchecked")
+                    ServerCallStreamObserver<ServerToClient> serverObs =
+                            (ServerCallStreamObserver<ServerToClient>) outbound;
+                    serverObs.setOnReadyHandler(() -> dispatcher.drainIfReady(userId));
+                }
 
                 // Send a ServerControl RESUME_FROM_SEQ to acknowledge the resume point
                 ServerToClient control = ServerToClient.newBuilder()
@@ -103,7 +122,7 @@ public class PushServiceImpl extends PushServiceGrpc.PushServiceImplBase {
                                 .setMessage("Session established")
                                 .build())
                         .build();
-                outbound.onNext(control);
+                session.writeToClient(control);
             }
 
             private void handleAck(ClientAck ack) {
@@ -161,6 +180,12 @@ public class PushServiceImpl extends PushServiceGrpc.PushServiceImplBase {
                 request.getPayloadBytes().toByteArray(),
                 Duration.ofMillis(ttlMs),
                 priority);
+
+        // If the session is live and its TCP window is open, deliver immediately
+        // instead of waiting for the next scheduled poll.
+        if (seqId > 0) {
+            dispatcher.drainIfReady(userId);
+        }
 
         boolean success = seqId > 0;
         responseObserver.onNext(SendPushResponse.newBuilder()

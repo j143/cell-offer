@@ -37,7 +37,7 @@ public class ConnectionManager {
         if (previous != null) {
             log.info("[ConnectionManager] Replacing existing session for user={}", userId);
             try {
-                previous.getOutbound().onCompleted();
+                previous.completeStream();
             } catch (Exception e) {
                 log.debug("[ConnectionManager] Error closing previous session for user={}: {}",
                         userId, e.getMessage());

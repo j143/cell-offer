@@ -108,7 +108,13 @@ public class PushGatewayClient {
                         .build())
                 .build());
 
-        backoffMs.set(BASE_BACKOFF_MS);
+        // NOTE: backoffMs is intentionally NOT reset here. It is only reset when
+        // the server sends a successful RESUME_FROM_SEQ ServerControl message,
+        // confirming the connection is truly established. Resetting here would
+        // cause the reconnect delay to stay at BASE_BACKOFF_MS forever if the
+        // server is down (connection refused completes instantly, onError fires,
+        // scheduleReconnect reads the already-reset value and plans the next
+        // attempt in only 1 s, bypassing the full exponential backoff).
         log.info("[PushGatewayClient] Connected: user={} device={} resumeSeqId={}",
                 userId, deviceId, lastAckSeqId.get());
     }
@@ -161,6 +167,14 @@ public class PushGatewayClient {
         private void handleControl(ServerControl control) {
             log.info("[PushGatewayClient] ServerControl type={} lastKnownSeqId={} msg={}",
                     control.getType(), control.getLastKnownSeqId(), control.getMessage());
+            // Reset exponential backoff only when the server confirms the session is
+            // successfully established. This prevents the backoff counter from being
+            // wiped on every connect() attempt, which would cause reconnect storms
+            // when the server is unreachable (connection failures are instantaneous
+            // and previously kept the delay stuck at BASE_BACKOFF_MS forever).
+            if (control.getType() == ServerControl.Type.RESUME_FROM_SEQ) {
+                backoffMs.set(BASE_BACKOFF_MS);
+            }
         }
 
         private void handleHeartbeat(ServerHeartbeat ignored) {
