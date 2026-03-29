@@ -20,14 +20,24 @@ POST /cells/{cellId}/offers
   │  • evicts lowest-priority offer when at capacity │
   └──────────────────────────────────────────────────┘
           │
-          ▼  (every 300 ms)
-      OfferFlusher  ──► logs / RAMEN-sink (simulated)
+          ▼  (via OfferPushClient)
+  PushServiceImpl (gRPC)
+  ┌──────────────────────────────────────────────────┐
+  │  MessageStore – immutable ledger until client ACK│
+  │  ConnectionManager – active bidi-stream sessions │
+  │  Dispatcher – event-driven drain via onReady     │
+  └──────────────────────────────────────────────────┘
+          │  ConnectStream (bidi gRPC stream)
+          ▼
+  PushGatewayClient (driver/rider mobile SDK)
           │
           ▼
   Micrometer metrics  ──►  /actuator/prometheus
 ```
 
 ### Core components
+
+#### Cell-offer layer
 
 | Class | Purpose |
 |---|---|
@@ -36,6 +46,49 @@ POST /cells/{cellId}/offers
 | `CellOfferQueueManager` | Per-cell bounded `PriorityBlockingQueue`; evicts lowest-priority on overflow |
 | `OfferFlusher` | `@Scheduled` component; flushes all cell queues every N ms |
 | `DispatchController` | REST API: enqueue offers, read per-cell or global stats |
+
+#### Push gateway layer
+
+| Class | Purpose |
+|---|---|
+| `MessageStore` | Per-user priority `TreeSet` with TTL; **read-only during dispatch** – messages removed only on explicit `ClientAck` (at-least-once) |
+| `ConnectionManager` | Registry of live `userId → ClientSession` mappings |
+| `ClientSession` | Live gRPC stream + metadata; all writes serialized via `ReentrantLock` (thread-safe) |
+| `PushServiceImpl` | gRPC service: handles `ConnectStream` (bidi) and `SendPush` (unary); registers `onReadyHandler` for backpressure-aware dispatch |
+| `Dispatcher` | **Event-driven** message drain (`drainIfReady`); heartbeat sender; liveness timeout checker |
+| `PushGatewayClient` | Mobile-side SDK; exponential backoff that resets only on confirmed server ack |
+
+---
+
+## Push Gateway Design – Key Invariants
+
+### At-Least-Once Delivery
+`MessageStore.pollDueMessages()` is intentionally **read-only** for live
+messages. A message is removed from the store only when `pruneAcked()` is
+called after receiving a `ClientAck`. This guarantees that a network drop
+between dispatch and device receipt will result in a re-delivery, not
+permanent message loss.
+
+### Event-Driven Backpressure
+There is no polling scheduler that pushes to all sessions every N ms. Instead,
+`PushServiceImpl` casts the gRPC `responseObserver` to
+`ServerCallStreamObserver` and registers an `onReadyHandler`. gRPC fires this
+handler whenever the client's TCP window transitions from full → available. Only
+then does the server drain the user's pending queue. This prevents unbounded
+memory growth and CPU waste on slow mobile connections.
+
+### Thread-Safe Stream Writes
+`io.grpc.stub.StreamObserver` is not thread-safe. `ClientSession.writeToClient()`
+and `ClientSession.completeStream()` serialize all writes with a
+`ReentrantLock`, preventing `IllegalStateException` from concurrent gRPC worker
+and scheduler threads.
+
+### Gauge Registration
+Micrometer gauges are registered exactly once per logical entity:
+`push_queue_depth` is registered inside `computeIfAbsent` (first enqueue for a
+user); `active_sessions` is registered in the `PushServiceImpl` constructor.
+Registering in hot paths (every `enqueue`, every `handleHello`) creates
+duplicate registrations and eventual OOM.
 
 ---
 
@@ -52,7 +105,7 @@ POST /cells/{cellId}/offers
 mvn spring-boot:run
 ```
 
-The service starts on **port 8080**.
+The service starts on **port 8080** (HTTP) and **port 9090** (gRPC).
 
 ### Enqueue an offer
 
@@ -105,6 +158,9 @@ Key metrics:
 | `offers_enqueued_total{cellId}` | Counter | Cumulative offers added |
 | `offers_expired_total{cellId}` | Counter | Offers dropped because TTL elapsed |
 | `offers_dropped_total{cellId}` | Counter | Offers rejected at enqueue time (queue full) |
+| `push_queue_depth{userId}` | Gauge | Pending push messages per user |
+| `push_messages_sent_total{userId}` | Counter | Messages delivered over gRPC |
+| `active_sessions` | Gauge | Currently connected mobile clients |
 
 ### Actuator health
 
@@ -122,6 +178,11 @@ Edit `src/main/resources/application.properties`:
 |---|---|---|
 | `cell.offer.max-queue-size` | `100` | Max offers per cell before eviction kicks in |
 | `cell.offer.flush-interval-ms` | `300` | How often (ms) the flush scheduler runs |
+| `push.gateway.max-queue-size-per-user` | `200` | Max pending push messages per user |
+| `push.gateway.dispatch-batch-size` | `10` | Messages drained per `onReadyHandler` call |
+| `push.gateway.heartbeat-interval-ms` | `10000` | Server heartbeat cadence (ms) |
+| `push.gateway.heartbeat-timeout-ms` | `30000` | Session liveness timeout (ms) |
+| `push.gateway.default-ttl-ms` | `30000` | Default push message TTL (ms) |
 | `server.port` | `8080` | HTTP server port |
 
 ---
