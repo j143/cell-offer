@@ -220,6 +220,29 @@ Each architectural invariant has a dedicated test class:
 | Hot-path evaluation & variant assignment | `ExperimentClientTest` |
 | YAML loading & scheduled reload | `ExperimentsConfigLoaderTest` |
 
+### Failure-mode drill tests (intentionally failing – fix to make them pass)
+
+The following tests were introduced as **debugging drills**. They demonstrate
+intentional failure modes injected into the production code. Each test documents
+the bug, shows how to observe it, and describes the fix. Fix the production code
+to make these tests pass.
+
+| Failure mode | Failing test(s) | Bug location |
+|---|---|---|
+| Bug 1 – Slow consumer / backpressure | `DispatcherEventDrivenTest.drainIfReady_skipsDispatch_whenStreamIsNotReady` | `Dispatcher.drainIfReady` – `isReady()` guard removed |
+| Bug 2 – Head-of-line blocking | `DispatcherEventDrivenTest.noScheduledDispatchAll_methodDoesNotExist` | `Dispatcher.dispatchAll()` – polling scheduler restored |
+| Bug 3 – At-most-once delivery | `MessageStoreAtLeastOnceTest.*`, `MessageStoreTest.pollDueMessages_*`, `DuplicateDeliveryOnReconnectTest.goal_*` | `MessageStore.pollDueMessages` – `it.remove()` on live messages |
+| Bug 5 – Session replacement race | `ConnectionManagerTest.registerSession_replacesExistingAndClosesOldStream` | `ConnectionManager.registerSession` – `completeStream()` removed |
+
+### Additional demonstration tests (passing – show the bug IS present)
+
+| Failure mode | Demonstration test | What it shows |
+|---|---|---|
+| Bug 1 – Backpressure | `SlowConsumerBackpressureTest` | Server sends to non-ready (slow) consumer |
+| Bug 7 – High-cardinality metrics | `HighCardinalityMetricsTest` | seqId tag creates one timer series per message |
+| Bug 3 – Reconnect/duplicate delivery | `DuplicateDeliveryOnReconnectTest.bugPresent_*` | Messages lost after network drop without ACK |
+| Bug 3 – Queue starvation | `QueueStarvationTest` | High-priority offers continuously evict low-priority offers |
+
 When adding new features to the push gateway or Citrus-lite, always add or
 update the corresponding invariant test.
 

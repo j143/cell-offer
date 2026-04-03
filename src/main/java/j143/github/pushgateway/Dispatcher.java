@@ -83,14 +83,20 @@ public class Dispatcher {
      *   <li>{@code PushServiceImpl.sendPush} – for low-latency delivery when a
      *       new message arrives while the stream is already open and ready.</li>
      * </ol>
+     *
+     * <p><strong>BUG (Slow Consumer / Backpressure – Invariant 4):</strong>
+     * The {@code isReady()} back-pressure guard has been removed. The server now
+     * pushes messages blindly regardless of whether the client's TCP window has
+     * space. On a slow mobile connection the gRPC write buffer fills up without
+     * bound, causing heap growth, GC pressure, and eventual OOM.
+     * <br>
+     * <em>Fix:</em> restore the early-return guard:
+     * {@code if (!serverObs.isReady()) return;}
      */
     public void drainIfReady(String userId) {
         connectionManager.getSession(userId).ifPresent(session -> {
             StreamObserver<ServerToClient> obs = session.getOutbound();
             if (!(obs instanceof ServerCallStreamObserver)) {
-                // Not a true server-side call (e.g., stub in unit tests): skip.
-                // In production this should never happen; log a warning so
-                // misconfiguration is visible.
                 log.warn("[Dispatcher] drainIfReady: observer for user={} is not a "
                         + "ServerCallStreamObserver (type={}); skipping drain",
                         userId, obs.getClass().getSimpleName());
@@ -99,17 +105,16 @@ public class Dispatcher {
             @SuppressWarnings("unchecked")
             ServerCallStreamObserver<ServerToClient> serverObs =
                     (ServerCallStreamObserver<ServerToClient>) obs;
-            if (!serverObs.isReady()) return;
+            // BUG 1: isReady() check removed – server ignores TCP backpressure.
+            // Restore: if (!serverObs.isReady()) return;
 
             List<PendingMessage> messages =
                     messageStore.pollDueMessages(userId, Instant.now(), dispatchBatchSize);
 
             for (PendingMessage msg : messages) {
-                if (!serverObs.isReady()) {
-                    // TCP window is full again; gRPC will fire onReadyHandler
-                    // when space is available – nothing to do here.
-                    break;
-                }
+                // BUG 1 (continued): mid-loop readiness check also removed,
+                // so a window that fills up mid-batch is not respected either.
+                // Restore: if (!serverObs.isReady()) { break; }
                 Timer.Sample sample = Timer.start(meterRegistry);
                 try {
                     ServerPush push = ServerPush.newBuilder()
@@ -128,10 +133,49 @@ public class Dispatcher {
                     connectionManager.removeSession(userId);
                     break;
                 } finally {
-                    sample.stop(meterRegistry.timer("push_delivery_latency", "userId", userId));
+                    // BUG 7 (High-Cardinality Metrics): seqId added as a metric tag.
+                    // Every unique seqId creates a new time-series in Prometheus/Micrometer.
+                    // With thousands of messages per second this causes a metric-cardinality
+                    // explosion that bloats the Prometheus scrape payload and can OOM the
+                    // metrics registry.
+                    // Fix: remove the "seqId" tag; use low-cardinality tags only (e.g. userId
+                    // bucket, priority range) and log high-cardinality detail as structured log
+                    // events instead.
+                    sample.stop(meterRegistry.timer("push_delivery_latency",
+                            "userId", userId,
+                            "seqId", String.valueOf(msg.getSeqId())));
                 }
             }
         });
+    }
+
+    // -----------------------------------------------------------------------
+    // BUG 2: Head-of-line blocking via @Scheduled serial poll
+    // -----------------------------------------------------------------------
+
+    /**
+     * <strong>BUG (Head-of-Line Blocking – Invariant 4):</strong>
+     * This method re-introduces the deleted {@code @Scheduled dispatchAll()} anti-pattern.
+     * It iterates every active session serially on a fixed 50 ms timer. A single
+     * slow or stalled session (e.g. one with a full write buffer) causes
+     * {@code drainIfReady} to block or spin, which delays delivery to <em>all</em>
+     * other sessions for the remainder of the 50 ms window. Under a mixed
+     * population of healthy and unhealthy clients this produces observable tail
+     * latency for every healthy driver.
+     *
+     * <p>Additionally, because Bug 1 removed the {@code isReady()} guard,
+     * {@code drainIfReady} blindly calls {@code onNext()} into full write buffers,
+     * compounding the memory pressure.
+     *
+     * <p><em>Fix:</em> delete this method entirely and rely solely on the event-driven
+     * {@code onReadyHandler} + {@code sendPush} triggers in {@link PushServiceImpl}.
+     */
+    @Scheduled(fixedDelayString = "${push.gateway.drain-all-interval-ms:50}")
+    public void dispatchAll() {
+        for (String userId : List.copyOf(connectionManager.getActiveUserIds())) {
+            // BUG: serial iteration – one slow session delays all others.
+            drainIfReady(userId);
+        }
     }
 
     // -----------------------------------------------------------------------
