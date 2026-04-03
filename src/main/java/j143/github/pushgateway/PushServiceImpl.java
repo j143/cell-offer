@@ -104,20 +104,28 @@ public class PushServiceImpl extends PushServiceGrpc.PushServiceImplBase {
                 log.info("[PushServiceImpl] ClientHello: user={} device={} resumeSeqId={}",
                         userId, deviceId, resumeSeqId);
 
-                // Evaluate experiment parameters ONCE per session (RAMEN Rule #1:
-                // Stateful Isolation). The resolved values are frozen in the
-                // ClientSession for the lifetime of this stream. Applying new
-                // experiment assignments mid-stream would violate the at-least-once
-                // delivery contract. New assignments take effect only on reconnect.
-                EvaluationContext ctx = new EvaluationContext().set("DRIVER", userId);
-                int  retryAttempts       = experimentClient.getIntParam(
-                        "ramen.retry.max-attempts", defaultRetryAttempts, ctx);
-                long heartbeatIntervalMs = experimentClient.getLongParam(
-                        "ramen.heartbeat.interval-ms", defaultHeartbeatIntervalMs, ctx);
+                // BUG 8 (Stale Experiment Config – Invariant C1):
+                // Experiment parameters are now evaluated with the DEFAULT values and
+                // not frozen from the experiment client at ClientHello time.  Instead,
+                // handleAck() below re-reads the live registry on every ACK message,
+                // allowing mid-stream parameter changes.
+                //
+                // This violates Citrus-lite Invariant C1 (Stateful Isolation): a config
+                // push that changes retry.max-attempts mid-stream will silently alter
+                // the delivery semantics of an in-flight session, breaking A/B analysis
+                // (units can switch cohorts) and potentially violating at-least-once
+                // guarantees if retry counts shrink below what is needed to re-deliver
+                // an unacked message.
+                //
+                // Fix: restore the single evaluation at ClientHello:
+                //   EvaluationContext ctx = new EvaluationContext().set("DRIVER", userId);
+                //   int  retryAttempts       = experimentClient.getIntParam("ramen.retry.max-attempts", defaultRetryAttempts, ctx);
+                //   long heartbeatIntervalMs = experimentClient.getLongParam("ramen.heartbeat.interval-ms", defaultHeartbeatIntervalMs, ctx);
+                // and remove the re-evaluation from handleAck().
 
                 ClientSession session = new ClientSession(
                         userId, deviceId, outbound, resumeSeqId,
-                        retryAttempts, heartbeatIntervalMs);
+                        defaultRetryAttempts, defaultHeartbeatIntervalMs);
                 connectionManager.registerSession(userId, session);
 
                 // Prune any already-acked messages from the queue
@@ -152,7 +160,20 @@ public class PushServiceImpl extends PushServiceGrpc.PushServiceImplBase {
                 long seqId = ack.getSeqId();
                 log.debug("[PushServiceImpl] ClientAck: user={} seqId={}", userId, seqId);
                 connectionManager.getSession(userId)
-                        .ifPresent(s -> s.updateAck(seqId));
+                        .ifPresent(s -> {
+                            s.updateAck(seqId);
+                            // BUG 8 (continued): re-evaluate Citrus-lite experiment params
+                            // on every ClientAck. If a config push occurs mid-stream, the
+                            // next ACK silently reassigns the session to a new cohort.
+                            // This makes per-session A/B assignment non-deterministic and
+                            // produces inconsistent metrics between exposure log and outcome.
+                            EvaluationContext ctx =
+                                    new EvaluationContext().set("DRIVER", userId);
+                            experimentClient.getIntParam(
+                                    "ramen.retry.max-attempts", defaultRetryAttempts, ctx);
+                            experimentClient.getLongParam(
+                                    "ramen.heartbeat.interval-ms", defaultHeartbeatIntervalMs, ctx);
+                        });
                 messageStore.pruneAcked(userId, seqId);
             }
 
