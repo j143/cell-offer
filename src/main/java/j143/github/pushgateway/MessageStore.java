@@ -56,18 +56,21 @@ public class MessageStore {
      * @return the assigned sequence-id, or -1 if the message was dropped
      */
     public long enqueue(String userId, byte[] payload, Duration ttl, int priority) {
-        UserQueue uq = userQueues.computeIfAbsent(userId, uid -> {
-            UserQueue newUq = new UserQueue(uid);
-            // Register gauge exactly once per user when the queue is first created.
-            // Placing this inside computeIfAbsent guarantees single registration even
-            // under concurrent callers, which prevents the OOM caused by duplicate
-            // Micrometer gauge registrations.
-            meterRegistry.gauge("push_queue_depth",
-                    java.util.List.of(io.micrometer.core.instrument.Tag.of("userId", uid)),
-                    newUq,
-                    q -> { synchronized (q.queue) { return q.queue.size(); } });
-            return newUq;
-        });
+        UserQueue uq = userQueues.computeIfAbsent(userId, uid -> new UserQueue(uid));
+
+        // BUG 4 (Gauge OOM – Invariant 2): Gauge registration moved into the hot
+        // enqueue() path so it runs on EVERY call instead of only when the queue
+        // is first created.  After N enqueue() calls for the same user, N duplicate
+        // push_queue_depth gauges exist in the Micrometer registry.  Micrometer
+        // holds weak references to gauge state objects; N copies accumulate in
+        // internal maps until GC cannot reclaim them and the process OOMs.
+        //
+        // Fix: move this block back inside computeIfAbsent() so it executes exactly
+        // once per userId.
+        meterRegistry.gauge("push_queue_depth",
+                java.util.List.of(io.micrometer.core.instrument.Tag.of("userId", userId)),
+                uq,
+                q -> { synchronized (q.queue) { return q.queue.size(); } });
 
         PendingMessage msg = new PendingMessage(
                 uq.nextSeqId.incrementAndGet(), userId, payload, ttl, priority);
@@ -116,16 +119,20 @@ public class MessageStore {
     /**
      * Returns up to {@code limit} non-expired messages ready for delivery.
      *
-     * <p><strong>At-Least-Once guarantee:</strong> this method is intentionally
-     * <em>read-only</em> for live messages. A message is only removed from the
-     * store when the server receives an explicit {@code ClientAck} and
-     * {@link #pruneAcked} is called. Expired messages are evicted eagerly
-     * because they will never reach a client and do not require acknowledgement.
+     * <p><strong>BUG (At-Most-Once – Invariant 1):</strong>
+     * Live messages are now removed from the store immediately when read, before
+     * any {@code ClientAck} is received. This reverts the queue to "At-Most-Once"
+     * semantics: if the network drops between dispatch and client receipt, the
+     * message is permanently lost with no way to re-deliver it.
+     * <br>
+     * <em>Fix:</em> remove {@code it.remove()} from the live-message branch.
+     * A message must remain in the store until {@link #pruneAcked} is called
+     * after the server receives an explicit {@code ClientAck}.
      *
      * @param userId target user
      * @param now    reference instant for TTL check
      * @param limit  maximum number of messages to return per call
-     * @return ordered list of messages ready for delivery (still in the store)
+     * @return ordered list of messages ready for delivery
      */
     public List<PendingMessage> pollDueMessages(String userId, Instant now, int limit) {
         UserQueue uq = userQueues.get(userId);
@@ -143,7 +150,11 @@ public class MessageStore {
                     log.debug("[MessageStore] Expired seqId={} for user={}", msg.getSeqId(), userId);
                 } else {
                     result.add(msg);
-                    // do NOT remove: message stays in store until pruneAcked() confirms delivery
+                    // BUG 3: message removed immediately on read instead of waiting for
+                    // an explicit ClientAck via pruneAcked(). A network drop between
+                    // dispatch and client-receipt causes permanent, unrecoverable message
+                    // loss. This is the "At-Most-Once" trap.
+                    it.remove();
                 }
             }
         }

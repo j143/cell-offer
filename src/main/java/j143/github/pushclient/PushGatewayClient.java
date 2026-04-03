@@ -86,9 +86,32 @@ public class PushGatewayClient {
     /**
      * Opens the gRPC channel and starts the bidirectional stream.
      * Safe to call multiple times (reconnect path).
+     *
+     * <p><strong>BUG (Reconnect Storm – Invariant 5):</strong>
+     * {@code backoffMs} is reset to {@link #BASE_BACKOFF_MS} at the start of
+     * every {@code connect()} call. Because a failed dial attempt delivers an
+     * instantaneous {@code onError("Connection refused")}, the sequence is:
+     * <ol>
+     *   <li>{@code connect()} resets backoff to 1 000 ms.</li>
+     *   <li>gRPC fires {@code onError} immediately.</li>
+     *   <li>{@code scheduleReconnect()} reads the already-reset value (1 000 ms)
+     *       and schedules the next attempt in exactly 1 000 ms.</li>
+     *   <li>Repeat forever – backoff never grows beyond 1 000 ms.</li>
+     * </ol>
+     * During a server outage the client hammers the server at 1 req/s regardless
+     * of how long the outage lasts, creating a reconnect storm that exhausts
+     * server resources and prevents recovery.
+     * <br>
+     * <em>Fix:</em> remove {@code backoffMs.set(BASE_BACKOFF_MS)} from here.
+     * The reset belongs only in {@code handleControl(RESUME_FROM_SEQ)}.
      */
     public synchronized void connect() {
         if (shutdownRequested) return;
+
+        // BUG 6: backoff reset unconditionally on every connect() attempt.
+        // This pins the reconnect delay at BASE_BACKOFF_MS (1 s) forever when
+        // the server is unreachable. Remove this line to restore correct backoff.
+        backoffMs.set(BASE_BACKOFF_MS);
 
         if (channel == null || channel.isShutdown() || channel.isTerminated()) {
             channel = ManagedChannelBuilder.forAddress(host, port)
@@ -108,13 +131,6 @@ public class PushGatewayClient {
                         .build())
                 .build());
 
-        // NOTE: backoffMs is intentionally NOT reset here. It is only reset when
-        // the server sends a successful RESUME_FROM_SEQ ServerControl message,
-        // confirming the connection is truly established. Resetting here would
-        // cause the reconnect delay to stay at BASE_BACKOFF_MS forever if the
-        // server is down (connection refused completes instantly, onError fires,
-        // scheduleReconnect reads the already-reset value and plans the next
-        // attempt in only 1 s, bypassing the full exponential backoff).
         log.info("[PushGatewayClient] Connected: user={} device={} resumeSeqId={}",
                 userId, deviceId, lastAckSeqId.get());
     }

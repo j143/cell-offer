@@ -29,19 +29,31 @@ public class ConnectionManager {
     /**
      * Registers {@code session} as the active session for {@code userId}.
      *
-     * <p>If a previous session exists it is closed via {@code onCompleted()} so
-     * the client side sees a clean stream end and reconnects.
+     * <p><strong>BUG (Session Replacement Race – Invariant 3):</strong>
+     * The previous session's stream is no longer closed before the new session
+     * is registered.  Between the {@code sessions.put()} and the (now-absent)
+     * {@code previous.completeStream()} call there is a window during which:
+     * <ul>
+     *   <li>The dispatcher or heartbeat scheduler can still write to the old
+     *       stream (it was not completed).</li>
+     *   <li>The client on the old stream receives messages intended for the
+     *       new session, potentially causing duplicate processing.</li>
+     *   <li>In concurrent-hello scenarios two threads can each see {@code null}
+     *       as the previous session and both register without cleaning up the
+     *       other.</li>
+     * </ul>
+     * <em>Fix:</em> call {@code previous.completeStream()} immediately after the
+     * atomic {@code sessions.put()} so the old stream is torn down before any
+     * subsequent dispatch or heartbeat can reach it.
      */
     public void registerSession(String userId, ClientSession session) {
         ClientSession previous = sessions.put(userId, session);
         if (previous != null) {
             log.info("[ConnectionManager] Replacing existing session for user={}", userId);
-            try {
-                previous.completeStream();
-            } catch (Exception e) {
-                log.debug("[ConnectionManager] Error closing previous session for user={}: {}",
-                        userId, e.getMessage());
-            }
+            // BUG 5: completeStream() on the old session is intentionally omitted.
+            // The old stream stays open and the dispatcher may continue writing to it,
+            // causing the stale client to receive messages meant for the new session.
+            // Fix: restore this call → previous.completeStream();
         }
         log.info("[ConnectionManager] Registered session: user={} device={}",
                 userId, session.getDeviceId());
