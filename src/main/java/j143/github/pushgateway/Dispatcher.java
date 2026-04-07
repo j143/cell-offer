@@ -105,7 +105,7 @@ public class Dispatcher {
             ServerCallStreamObserver<ServerToClient> serverObs =
                     (ServerCallStreamObserver<ServerToClient>) obs;
             // BUG 1: isReady() check removed – server ignores TCP backpressure.
-            // Restore: if (!serverObs.isReady()) return;
+            if (!serverObs.isReady()) return;
 
             List<PendingMessage> messages =
                     messageStore.pollDueMessages(userId, Instant.now(), dispatchBatchSize);
@@ -113,7 +113,7 @@ public class Dispatcher {
             for (PendingMessage msg : messages) {
                 // BUG 1 (continued): mid-loop readiness check also removed,
                 // so a window that fills up mid-batch is not respected either.
-                // Restore: if (!serverObs.isReady()) { break; }
+                if (!serverObs.isReady()) { break; }
                 Timer.Sample sample = Timer.start(meterRegistry);
                 try {
                     ServerPush push = ServerPush.newBuilder()
