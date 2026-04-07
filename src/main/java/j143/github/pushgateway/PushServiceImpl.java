@@ -118,9 +118,9 @@ public class PushServiceImpl extends PushServiceGrpc.PushServiceImplBase {
                 // an unacked message.
                 //
                 // Fix: restore the single evaluation at ClientHello:
-                //   EvaluationContext ctx = new EvaluationContext().set("DRIVER", userId);
-                //   int  retryAttempts       = experimentClient.getIntParam("ramen.retry.max-attempts", defaultRetryAttempts, ctx);
-                //   long heartbeatIntervalMs = experimentClient.getLongParam("ramen.heartbeat.interval-ms", defaultHeartbeatIntervalMs, ctx);
+                EvaluationContext ctx = new EvaluationContext().set("DRIVER", userId);
+                int  retryAttempts       = experimentClient.getIntParam("ramen.retry.max-attempts", defaultRetryAttempts, ctx);
+                long heartbeatIntervalMs = experimentClient.getLongParam("ramen.heartbeat.interval-ms", defaultHeartbeatIntervalMs, ctx);
                 // and remove the re-evaluation from handleAck().
 
                 ClientSession session = new ClientSession(
@@ -167,12 +167,12 @@ public class PushServiceImpl extends PushServiceGrpc.PushServiceImplBase {
                             // next ACK silently reassigns the session to a new cohort.
                             // This makes per-session A/B assignment non-deterministic and
                             // produces inconsistent metrics between exposure log and outcome.
-                            EvaluationContext ctx =
-                                    new EvaluationContext().set("DRIVER", userId);
-                            experimentClient.getIntParam(
-                                    "ramen.retry.max-attempts", defaultRetryAttempts, ctx);
-                            experimentClient.getLongParam(
-                                    "ramen.heartbeat.interval-ms", defaultHeartbeatIntervalMs, ctx);
+//                            EvaluationContext ctx =
+//                                    new EvaluationContext().set("DRIVER", userId);
+//                            experimentClient.getIntParam(
+//                                    "ramen.retry.max-attempts", defaultRetryAttempts, ctx);
+//                            experimentClient.getLongParam(
+//                                    "ramen.heartbeat.interval-ms", defaultHeartbeatIntervalMs, ctx);
                         });
                 messageStore.pruneAcked(userId, seqId);
             }

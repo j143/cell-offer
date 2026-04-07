@@ -24,7 +24,7 @@ import java.util.List;
 /**
  * Handles push message delivery and session liveness for all connected clients.
  *
- * <h3>Event-driven dispatch (Fix 4 – "Loop of Death")</h3>
+ * <h3>Event-driven dispatch</h3>
  * <p>The previous implementation polled all sessions every 50 ms regardless of
  * TCP window state, which caused unbounded in-memory buffering and CPU waste on
  * slow mobile connections. The current implementation is fully event-driven:
@@ -35,7 +35,6 @@ import java.util.List;
  *       {@code PushServiceImpl.handleHello}. gRPC's {@code onReadyHandler} fires
  *       whenever the client's TCP window transitions from full → available,
  *       providing native backpressure.</li>
- *   <li>The old {@code @Scheduled dispatchAll()} method has been deleted.</li>
  * </ul>
  *
  * <p>Heartbeat sending and session-liveness checking remain scheduled.

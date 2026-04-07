@@ -56,7 +56,14 @@ public class MessageStore {
      * @return the assigned sequence-id, or -1 if the message was dropped
      */
     public long enqueue(String userId, byte[] payload, Duration ttl, int priority) {
-        UserQueue uq = userQueues.computeIfAbsent(userId, uid -> new UserQueue(uid));
+        UserQueue uq = userQueues.computeIfAbsent(userId, uid -> {
+            UserQueue u = new UserQueue(uid);
+            meterRegistry.gauge("push_queue_depth",
+                    java.util.List.of(io.micrometer.core.instrument.Tag.of("userId", userId)),
+                    u,
+                    q -> { synchronized (q.queue) { return q.queue.size(); } });
+            return u;
+        } );
 
         // BUG 4 (Gauge OOM – Invariant 2): Gauge registration moved into the hot
         // enqueue() path so it runs on EVERY call instead of only when the queue
@@ -67,10 +74,6 @@ public class MessageStore {
         //
         // Fix: move this block back inside computeIfAbsent() so it executes exactly
         // once per userId.
-        meterRegistry.gauge("push_queue_depth",
-                java.util.List.of(io.micrometer.core.instrument.Tag.of("userId", userId)),
-                uq,
-                q -> { synchronized (q.queue) { return q.queue.size(); } });
 
         PendingMessage msg = new PendingMessage(
                 uq.nextSeqId.incrementAndGet(), userId, payload, ttl, priority);
@@ -154,7 +157,7 @@ public class MessageStore {
                     // an explicit ClientAck via pruneAcked(). A network drop between
                     // dispatch and client-receipt causes permanent, unrecoverable message
                     // loss. This is the "At-Most-Once" trap.
-                    it.remove();
+                    // it.remove();
                 }
             }
         }
