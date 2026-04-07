@@ -54,6 +54,7 @@ public class ConnectionManager {
             // The old stream stays open and the dispatcher may continue writing to it,
             // causing the stale client to receive messages meant for the new session.
             // Fix: restore this call → previous.completeStream();
+            previous.completeStream();
         }
         log.info("[ConnectionManager] Registered session: user={} device={}",
                 userId, session.getDeviceId());
