@@ -169,13 +169,13 @@ public class Dispatcher {
      * <p><em>Fix:</em> delete this method entirely and rely solely on the event-driven
      * {@code onReadyHandler} + {@code sendPush} triggers in {@link PushServiceImpl}.
      */
-    @Scheduled(fixedDelayString = "${push.gateway.drain-all-interval-ms:50}")
-    public void dispatchAll() {
-        for (String userId : List.copyOf(connectionManager.getActiveUserIds())) {
-            // BUG: serial iteration – one slow session delays all others.
-            drainIfReady(userId);
-        }
-    }
+//    @Scheduled(fixedDelayString = "${push.gateway.drain-all-interval-ms:50}")
+//    public void dispatchAll() {
+//        for (String userId : List.copyOf(connectionManager.getActiveUserIds())) {
+//            // BUG: serial iteration – one slow session delays all others.
+//            drainIfReady(userId);
+//        }
+//    }
 
     // -----------------------------------------------------------------------
     // Heartbeat sender
