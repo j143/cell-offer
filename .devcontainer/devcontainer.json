@@ -6,19 +6,14 @@
 	"image": "mcr.microsoft.com/devcontainers/java:3-21-bookworm",
 
 	"features": {
-		"ghcr.io/devcontainers/features/java:1": {
-			"version": "none",
-			"installMaven": "true",
-			"installGradle": "false"
-		},
-		"ghcr.io/devcontainer-config/features/dot-config:4": {}
-	}
+		"ghcr.io/devcontainers/features/maven:1": {}
+	},
 
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	// "forwardPorts": [],
+	"forwardPorts": [8080, 9090],
 
 	// Use 'postCreateCommand' to run commands after the container is created.
-	// "postCreateCommand": "java -version",
+	"postCreateCommand": "mvn test"
 
 	// Configure tool-specific properties.
 	// "customizations": {},
