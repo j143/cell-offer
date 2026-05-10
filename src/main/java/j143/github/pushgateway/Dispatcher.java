@@ -104,7 +104,7 @@ public class Dispatcher {
             @SuppressWarnings("unchecked")
             ServerCallStreamObserver<ServerToClient> serverObs =
                     (ServerCallStreamObserver<ServerToClient>) obs;
-            // BUG 1: isReady() check removed – server ignores TCP backpressure.
+            // BUG 1 (addressed): isReady() check removed – server ignores TCP backpressure.
             if (!serverObs.isReady()) return;
 
             List<PendingMessage> messages =
@@ -153,7 +153,7 @@ public class Dispatcher {
     // -----------------------------------------------------------------------
 
     /**
-     * <strong>BUG (Head-of-Line Blocking – Invariant 4):</strong>
+     * <strong>BUG (Head-of-Line Blocking – Invariant 4) (addressed):</strong>
      * This method re-introduces the deleted {@code @Scheduled dispatchAll()} anti-pattern.
      * It iterates every active session serially on a fixed 50 ms timer. A single
      * slow or stalled session (e.g. one with a full write buffer) causes
