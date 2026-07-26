@@ -258,6 +258,53 @@ In `Dispatcher.drainIfReady()`, you have `if (!session.isReady()) return;`. What
   7. Heartbeat timeout triggers; sessions die
   8. Thundering herd of reconnects
 - **Measurement**: Run `SlowConsumerBackpressureTest` to see this in action
+
+---
+
+## 5. VIRTUAL THREADS & STRUCTURED CONCURRENCY
+
+### Q5.1: Why Use Virtual Threads for Blocking I/O?
+**The Question:**
+You have a Spring Boot endpoint that fans out to several blocking I/O calls. Why switch from platform threads to virtual threads?
+
+**What They're Testing:**
+- Do you understand the difference between thread count and concurrency?
+- Can you explain why blocking I/O is a poor fit for a small fixed worker pool?
+- Do you know when virtual threads help and when they do not?
+
+**Strong Answer Points:**
+- Virtual threads let you keep the code style simple and blocking without tying up expensive carrier threads
+- They are useful when work is mostly I/O-bound: HTTP calls, JDBC, remote services, filesystem access
+- They do not make CPU-bound work faster; they improve throughput under blocking load
+- They reduce the need for manual callbacks, reactive chains, or large thread pools
+- In Spring Boot, enabling `spring.threads.virtual.enabled=true` is the low-friction way to adopt them for servlet requests
+
+### Q5.2: Why Use StructuredTaskScope Instead of CompletableFuture?
+**The Question:**
+Your service runs two downstream calls in parallel. Why use `StructuredTaskScope` rather than `CompletableFuture.allOf(...)`?
+
+**What They're Testing:**
+- Do you understand lifecycle scoping and failure handling?
+- Can you explain cancellation semantics?
+- Do you know why structured concurrency is easier to reason about?
+
+**Strong Answer Points:**
+- `StructuredTaskScope` gives you a clear parent-child lifetime for subtasks
+- If one task fails, `ShutdownOnFailure` can cancel the remaining work quickly
+- The code reads like a single transactional unit: fork, join, handle result
+- It avoids scattering error handling across callbacks or chained stages
+- It is a better fit when the work is naturally fan-out / fan-in and you want the caller to wait for all results
+
+### Q5.3: What Interview Questions Follow This Demo?
+**The Question:**
+If a candidate built the demo endpoint in this repo, what should you ask next?
+
+**Good Follow-Ups:**
+- What happens if one downstream call is slow or hangs?
+- How would you enforce timeouts and partial fallback responses?
+- When would you prefer `StructuredTaskScope.ShutdownOnFailure` vs `ShutdownOnSuccess`?
+- How do virtual threads interact with connection pools, JDBC, and synchronized blocks?
+- What metrics would you add to prove the fan-out actually reduced latency?
 - **Fix**: Check `isReady()` before writing; return early if not ready
 
 ---

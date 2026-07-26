@@ -96,7 +96,7 @@ duplicate registrations and eventual OOM.
 
 ### Requirements
 
-* Java 17+
+* Java 21+
 * Maven 3.9+
 
 ### Run
@@ -106,6 +106,18 @@ mvn spring-boot:run
 ```
 
 The service starts on **port 8080** (HTTP) and **port 9090** (gRPC).
+
+### Virtual-thread aggregation demo
+
+This repo also includes a small Spring MVC example that uses virtual threads
+and `StructuredTaskScope` to fan out two blocking I/O-style calls in parallel.
+
+```bash
+curl -s http://localhost:8080/demo/users/u-100/summary | jq .
+```
+
+The endpoint combines a simulated profile lookup and order snapshot, then
+returns a single aggregated response.
 
 ### Enqueue an offer
 
@@ -184,6 +196,7 @@ Edit `src/main/resources/application.properties`:
 | `push.gateway.heartbeat-timeout-ms` | `30000` | Session liveness timeout (ms) |
 | `push.gateway.default-ttl-ms` | `30000` | Default push message TTL (ms) |
 | `server.port` | `8080` | HTTP server port |
+| `spring.threads.virtual.enabled` | `true` | Run servlet request handling on virtual threads |
 
 ---
 
