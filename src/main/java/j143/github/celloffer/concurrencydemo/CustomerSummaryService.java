@@ -26,7 +26,7 @@ public class CustomerSummaryService {
             var orderTask = scope.fork(() -> orderSnapshotClient.fetchOrderSnapshot(userId));
 
             scope.join();
-            scope.throwIfFailed();
+            // scope.throwIfFailed();
 
             return new CustomerSummaryResponse(
                     userId,
