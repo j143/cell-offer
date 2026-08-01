@@ -1,5 +1,8 @@
 package j143.github.celloffer.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import j143.github.celloffer.dto.EnqueueOfferRequest;
 import j143.github.celloffer.model.CellQueueStats;
 import j143.github.celloffer.model.Offer;
@@ -26,6 +29,7 @@ import java.util.UUID;
  * GET  /cells/stats              – return stats for all cells
  * </pre>
  */
+@Tag(name = "Dispatch", description = "H3-cell offer queue operations")
 @RestController
 @RequestMapping("/cells")
 public class DispatchController {
@@ -44,6 +48,11 @@ public class DispatchController {
      *                {@code priority}, and {@code ttlMillis}
      * @return 202 Accepted with the generated {@code offerId}
      */
+    @Operation(
+        summary = "Enqueue a driver offer",
+        description = "Push a driver offer into the bounded priority queue for a given H3 cell."
+    )
+    @ApiResponse(responseCode = "202", description = "Offer accepted, returns offerId")
     @PostMapping("/{cellId}/offers")
     public ResponseEntity<Map<String, String>> enqueueOffer(
             @PathVariable String cellId,
@@ -71,6 +80,8 @@ public class DispatchController {
      * @param cellId the H3 cell identifier (path variable)
      * @return 200 OK with a JSON payload containing stats and live queue depth
      */
+    @Operation(summary = "Get stats for a single cell")
+    @ApiResponse(responseCode = "200", description = "Cell queue stats")
     @GetMapping("/{cellId}/stats")
     public ResponseEntity<Map<String, Object>> getCellStats(
             @PathVariable String cellId) {
@@ -93,6 +104,7 @@ public class DispatchController {
      *
      * @return 200 OK with a map of cellId → stats payload
      */
+    @Operation(summary = "Get aggregate stats for all cells")
     @GetMapping("/stats")
     public ResponseEntity<Map<String, Map<String, Object>>> getAllStats() {
         Map<String, CellQueueStats> all = queueManager.getAllStats();

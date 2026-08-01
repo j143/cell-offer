@@ -2,6 +2,7 @@
   "java.configuration.updateBuildConfiguration": "automatic",
   "java.errors.incompleteClasspath.severity": "warning",
   "java.configuration.checkProjectSettingsExclusions": false,
+  "java.jdt.ls.lombokSupport.enabled": true,
   "java.format.settings.url": "",
   "java.format.settings.profile": "",
   "java.import.gradle.enabled": false,
