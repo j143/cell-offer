@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cell Offer Docs</title>
+  <meta name="description" content="Documentation for the Cell Offer Queue Service and its OpenAPI endpoints." />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="backdrop backdrop-one"></div>
+  <div class="backdrop backdrop-two"></div>
+
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">CO</div>
+        <div>
+          <div class="brand-name">Cell Offer</div>
+          <div class="brand-subtitle">DispatchCellQueue docs</div>
+        </div>
+      </div>
+
+      <nav class="nav" aria-label="Documentation sections">
+        <a href="#overview">Overview</a>
+        <a href="#quick-start">Quick start</a>
+        <a href="#api-reference">API reference</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#configuration">Configuration</a>
+      </nav>
+
+      <section class="sidebar-panel">
+        <div class="sidebar-label">Live spec</div>
+        <p>The OpenAPI document is generated from the running app and published alongside this site.</p>
+        <a class="button button-ghost" href="./openapi-v1.json" download>Download openapi-v1.json</a>
+      </section>
+    </aside>
+
+    <main class="content">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">GitHub Pages documentation</p>
+          <h1>Docs for the Cell Offer Queue Service</h1>
+          <p class="lede">
+            A compact, GitHub-docs-style landing page for the queue service, backed by the live OpenAPI spec
+            from <code>/v3/api-docs/v1</code> and designed to stay readable on GitHub Pages.
+          </p>
+
+          <div class="hero-actions">
+            <a class="button" href="#api-reference">Explore endpoints</a>
+            <a class="button button-secondary" href="./openapi-v1.json">Open OpenAPI JSON</a>
+          </div>
+        </div>
+
+        <div class="hero-panel">
+          <div class="stat-grid">
+            <article>
+              <span id="endpoint-count" class="stat-value">3</span>
+              <span class="stat-label">REST endpoints</span>
+            </article>
+            <article>
+              <span class="stat-value">1</span>
+              <span class="stat-label">OpenAPI group</span>
+            </article>
+            <article>
+              <span class="stat-value">8080</span>
+              <span class="stat-label">HTTP port</span>
+            </article>
+            <article>
+              <span class="stat-value">9090</span>
+              <span class="stat-label">gRPC port</span>
+            </article>
+          </div>
+        </div>
+      </header>
+
+      <section id="overview" class="section card-grid">
+        <article class="card accent-card">
+          <div class="card-kicker">What it does</div>
+          <h2>Cell-based offer ingestion</h2>
+          <p>Accept driver offers per H3 cell, queue them with TTL and priority, then surface queue depth and counters.</p>
+        </article>
+
+        <article class="card">
+          <div class="card-kicker">Push path</div>
+          <h2>At-least-once delivery</h2>
+          <p>The push gateway keeps live messages until client ACK, then prunes them explicitly after receipt confirmation.</p>
+        </article>
+
+        <article class="card">
+          <div class="card-kicker">Observability</div>
+          <h2>Metrics and health</h2>
+          <p>Micrometer counters and gauges expose cell queue depth, push queue depth, and active session state.</p>
+        </article>
+      </section>
+
+      <section id="quick-start" class="section split">
+        <article class="panel">
+          <p class="section-label">Quick start</p>
+          <h2>Run locally</h2>
+          <pre><code>mvn spring-boot:run</code></pre>
+          <p>The service starts on port 8080 for HTTP and 9090 for gRPC.</p>
+        </article>
+
+        <article class="panel">
+          <p class="section-label">Sample request</p>
+          <h2>Create an offer</h2>
+          <pre><code>curl -s -X POST http://localhost:8080/cells/8928308280fffff/offers \
+  -H 'Content-Type: application/json' \
+  -d '{"driverId":"d-001","riderId":"r-001","priority":5,"ttlMillis":5000}'</code></pre>
+        </article>
+      </section>
+
+      <section id="api-reference" class="section panel">
+        <div class="section-head">
+          <div>
+            <p class="section-label">API reference</p>
+            <h2>Live endpoint catalog</h2>
+          </div>
+          <label class="search" for="endpoint-filter">
+            <span>Search</span>
+            <input id="endpoint-filter" type="search" placeholder="Filter endpoints, methods, or descriptions" />
+          </label>
+        </div>
+        <div id="endpoint-grid" class="endpoint-grid" aria-live="polite"></div>
+        <p id="endpoint-empty" class="empty-state hidden">No endpoints match that filter.</p>
+      </section>
+
+      <section id="architecture" class="section split">
+        <article class="panel">
+          <p class="section-label">Architecture</p>
+          <h2>Queue-to-push flow</h2>
+          <ol class="timeline">
+            <li><strong>DispatchController</strong> accepts per-cell offers and forwards them into the queue manager.</li>
+            <li><strong>OfferFlusher</strong> drains due offers and hands them to the push client.</li>
+            <li><strong>PushServiceImpl</strong> stores messages, handles ACKs, and drains streams on readiness.</li>
+          </ol>
+        </article>
+
+        <article class="panel">
+          <p class="section-label">Design notes</p>
+          <h2>Why this site exists</h2>
+          <p>
+            It gives the repository a lightweight GitHub Pages landing page with a docs.github.com-inspired layout,
+            while keeping the generated OpenAPI document available as a downloadable asset.
+          </p>
+        </article>
+      </section>
+
+      <section id="configuration" class="section panel">
+        <p class="section-label">Configuration</p>
+        <h2>Important properties</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Property</th><th>Default</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>cell.offer.max-queue-size</code></td><td>100</td><td>Max offers per cell before eviction.</td></tr>
+              <tr><td><code>push.gateway.dispatch-batch-size</code></td><td>10</td><td>Messages drained per on-ready event.</td></tr>
+              <tr><td><code>push.gateway.heartbeat-interval-ms</code></td><td>10000</td><td>Server heartbeat cadence.</td></tr>
+              <tr><td><code>push.gateway.default-ttl-ms</code></td><td>30000</td><td>Default push message TTL.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="./app.js" defer></script>
+</body>
+</html>
