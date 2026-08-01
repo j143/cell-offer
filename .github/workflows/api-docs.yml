@@ -13,7 +13,8 @@ jobs:
       - run: |
           java --enable-preview -jar target/*.jar &
           sleep 10
-          curl -o docs/openapi-v1.json http://localhost:8080/v3/api-docs/v1
+          mkdir -p docs
+          curl --fail --show-error --silent -o docs/openapi-v1.json http://localhost:8080/v3/api-docs/v1
       - uses: actions/upload-artifact@v4
         with:
           name: openapi-spec
