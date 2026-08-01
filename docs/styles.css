@@ -326,6 +326,86 @@ code, pre {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
 }
+.inner-panel {
+  min-height: 100%;
+}
+
+.control-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+  align-items: end;
+}
+
+.control-grid-wide {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 1rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.field span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.field input,
+.field select {
+  width: 100%;
+  min-height: 2.9rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  padding: 0 1rem;
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--ink);
+}
+
+.experiment-grid {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.experiment-card {
+  padding: 1rem;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(250, 247, 241, 0.96));
+  display: grid;
+  gap: 0.7rem;
+}
+
+.experiment-card h3 {
+  margin: 0;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.status-on {
+  background: rgba(11, 143, 122, 0.12);
+  color: #0b6b5d;
+}
+
+.status-off {
+  background: rgba(124, 77, 255, 0.12);
+  color: #6842d7;
+}
+
+.result-box {
+  min-height: 10rem;
+}
 
 .endpoint-card {
   display: grid;
@@ -447,7 +527,9 @@ pre {
   .hero,
   .section,
   .split,
-  .endpoint-grid {
+  .endpoint-grid,
+  .control-grid,
+  .control-grid-wide {
     grid-template-columns: 1fr;
   }
 
@@ -485,5 +567,10 @@ pre {
 
   .search {
     min-width: 100%;
+  }
+
+  .control-grid,
+  .control-grid-wide {
+    grid-template-columns: 1fr;
   }
 }

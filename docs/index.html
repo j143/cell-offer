@@ -36,6 +36,16 @@
         <p>The OpenAPI document is generated from the running app and published alongside this site.</p>
         <a class="button button-ghost" href="./openapi-v1.json" download>Download openapi-v1.json</a>
       </section>
+
+      <section class="sidebar-panel">
+        <div class="sidebar-label">API target</div>
+        <p>Point the UI at localhost, Cloud Run, or any backend you want to inspect.</p>
+        <label class="search" for="api-base-url">
+          <span>Base URL</span>
+          <input id="api-base-url" type="url" value="http://localhost:8080" spellcheck="false" />
+        </label>
+        <button id="save-api-base" class="button button-ghost" type="button">Save target</button>
+      </section>
     </aside>
 
     <main class="content">
@@ -111,6 +121,95 @@
   -H 'Content-Type: application/json' \
   -d '{"driverId":"d-001","riderId":"r-001","priority":5,"ttlMillis":5000}'</code></pre>
         </article>
+      </section>
+
+      <section id="experiments" class="section panel">
+        <div class="section-head">
+          <div>
+            <p class="section-label">Experiment probe</p>
+            <h2>Inspect and evaluate live Citrus config</h2>
+          </div>
+          <button id="refresh-experiments" class="button button-secondary" type="button">Refresh experiments</button>
+        </div>
+
+        <div class="split">
+          <article class="panel inner-panel">
+            <p class="section-label">Current experiments</p>
+            <div id="experiment-grid" class="experiment-grid"></div>
+            <p id="experiment-empty" class="empty-state hidden">No experiments loaded yet.</p>
+          </article>
+
+          <article class="panel inner-panel">
+            <p class="section-label">Probe a parameter</p>
+            <form id="probe-form" class="control-grid">
+              <label class="field">
+                <span>Parameter key</span>
+                <input name="paramKey" value="ramen.retry.max-attempts" required />
+              </label>
+              <label class="field">
+                <span>Unit type</span>
+                <input name="unitType" value="DRIVER" required />
+              </label>
+              <label class="field">
+                <span>Unit ID</span>
+                <input name="unitId" value="driver-001" required />
+              </label>
+              <label class="field">
+                <span>Kind</span>
+                <select name="kind">
+                  <option value="int">int</option>
+                  <option value="long">long</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Default value</span>
+                <input name="defaultValue" value="3" required />
+              </label>
+              <button class="button" type="submit">Run probe</button>
+            </form>
+            <pre id="probe-result" class="result-box">Run a probe to see the resolved value, active experiment, and assigned bucket.</pre>
+          </article>
+        </div>
+      </section>
+
+      <section id="load-simulator" class="section panel">
+        <div class="section-head">
+          <div>
+            <p class="section-label">Load simulation</p>
+            <h2>Generate offer traffic against a chosen cell</h2>
+          </div>
+          <button id="run-load" class="button button-secondary" type="button">Run load</button>
+        </div>
+
+        <form id="load-form" class="control-grid control-grid-wide">
+          <label class="field">
+            <span>Cell ID</span>
+            <input name="cellId" value="8928308280fffff" required />
+          </label>
+          <label class="field">
+            <span>Total requests</span>
+            <input name="requestCount" type="number" min="1" max="5000" value="100" required />
+          </label>
+          <label class="field">
+            <span>Batch size</span>
+            <input name="batchSize" type="number" min="1" max="200" value="10" required />
+          </label>
+          <label class="field">
+            <span>Priority</span>
+            <input name="priority" type="number" min="0" max="10" value="5" required />
+          </label>
+          <label class="field">
+            <span>TTL millis</span>
+            <input name="ttlMillis" type="number" min="1" value="5000" required />
+          </label>
+          <label class="field">
+            <span>Rider prefix</span>
+            <input name="riderPrefix" value="r" />
+          </label>
+        </form>
+
+        <p id="load-progress" class="muted">Idle.</p>
+        <pre id="load-result" class="result-box">Run a load simulation to enqueue offers and inspect the resulting cell stats.</pre>
       </section>
 
       <section id="api-reference" class="section panel">
