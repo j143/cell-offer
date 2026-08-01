@@ -132,17 +132,16 @@ public class Dispatcher {
                     connectionManager.removeSession(userId);
                     break;
                 } finally {
-                    // BUG 7 (High-Cardinality Metrics): seqId added as a metric tag.
+                    // BUG 7 (High-Cardinality Metrics) - Fixed: seqId added as a metric tag.
                     // Every unique seqId creates a new time-series in Prometheus/Micrometer.
                     // With thousands of messages per second this causes a metric-cardinality
                     // explosion that bloats the Prometheus scrape payload and can OOM the
                     // metrics registry.
-                    // Fix: remove the "seqId" tag; use low-cardinality tags only (e.g. userId
+                    // Solution: removed the "seqId" tag; use low-cardinality tags only (e.g. userId
                     // bucket, priority range) and log high-cardinality detail as structured log
                     // events instead.
                     sample.stop(meterRegistry.timer("push_delivery_latency",
-                            "userId", userId,
-                            "seqId", String.valueOf(msg.getSeqId())));
+                            "priority", String.valueOf(msg.getPriority())));
                 }
             }
         });
