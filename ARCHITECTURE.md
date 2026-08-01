@@ -48,50 +48,50 @@ graph TB
     end
 
     %% Client to gRPC transport
-    PushGatewayClient -->|ClientHello<br/>ClientAck<br/>ClientHeartbeat| ConnectStream
-    ClientCtl -->|Control flow| PushGatewayClient
+    PushGatewayClient -->|"ClientHello<br/>ClientAck<br/>ClientHeartbeat"| ConnectStream
+    ClientCtl -->|"Control flow"| PushGatewayClient
 
     %% gRPC transport to PushServiceImpl
-    ConnectStream -->|handleHello<br/>handleAck<br/>handleHeartbeat| PushServiceImpl
-    SendPush -->|sendPush| PushServiceImpl
+    ConnectStream -->|"handleHello<br/>handleAck<br/>handleHeartbeat"| PushServiceImpl
+    SendPush -->|"sendPush"| PushServiceImpl
 
     %% PushServiceImpl orchestration
-    PushServiceImpl -->|registerSession| ConnectionMgr
-    PushServiceImpl -->|getIntParam<br/>getLongParam<br/>Evaluate once @ hello| ExperimentClient
-    PushServiceImpl -->|setOnReadyHandler<br/>register backpressure| Dispatcher
-    PushServiceImpl -->|enqueue<br/>pruneAcked| MessageStore
+    PushServiceImpl -->|"registerSession"| ConnectionMgr
+    PushServiceImpl -->|"getIntParam<br/>getLongParam<br/>Evaluate once @ hello"| ExperimentClient
+    PushServiceImpl -->|"setOnReadyHandler<br/>register backpressure"| Dispatcher
+    PushServiceImpl -->|"enqueue<br/>pruneAcked"| MessageStore
 
     %% MessageStore and ClientSession
-    MessageStore -->|store/retrieve| ClientSession
-    ClientSession -->|writeToClient<br/>completeStream<br/>serialized| ConnectStream
+    MessageStore -->|"store/retrieve"| ClientSession
+    ClientSession -->|"writeToClient<br/>completeStream<br/>serialized"| ConnectStream
 
     %% Dispatcher event-driven
-    Dispatcher -->|drainIfReady<br/>on backpressure| ClientSession
-    Dispatcher -->|sendHeartbeats<br/>@Scheduled| ClientSession
-    Dispatcher -->|checkHeartbeatTimeouts<br/>@Scheduled| ConnectionMgr
+    Dispatcher -->|"drainIfReady<br/>on backpressure"| ClientSession
+    Dispatcher -->|"sendHeartbeats<br/>@Scheduled"| ClientSession
+    Dispatcher -->|"checkHeartbeatTimeouts<br/>@Scheduled"| ConnectionMgr
 
     %% ConnectionManager and ClientSession
-    ConnectionMgr -->|manage lifecycle| ClientSession
+    ConnectionMgr -->|"manage lifecycle"| ClientSession
 
     %% Citrus-lite evaluation
-    ExperimentClient -->|load config| ExperimentRegistry
-    ExperimentClient -->|bucket user| ExperimentHasher
-    ExperimentClient -->|log exposure| ExposureLogger
-    ConfigLoader -->|@PostConstruct<br/>@Scheduled reload| ExperimentRegistry
+    ExperimentClient -->|"load config"| ExperimentRegistry
+    ExperimentClient -->|"bucket user"| ExperimentHasher
+    ExperimentClient -->|"log exposure"| ExposureLogger
+    ConfigLoader -->|"@PostConstruct<br/>@Scheduled reload"| ExperimentRegistry
 
     %% Cell-offer flow
-    REST -->|POST /offers| DispatchController
-    DispatchController -->|enqueue| CellOfferQueueManager
-    CellOfferQueueManager -->|track stats| CellQueueStats
-    OfferFlusher -->|drain & flush<br/>to SendPush| CellOfferQueueManager
-    OfferFlusher -->|SendPush RPC| SendPush
+    REST -->|"POST /offers"| DispatchController
+    DispatchController -->|"enqueue"| CellOfferQueueManager
+    CellOfferQueueManager -->|"track stats"| CellQueueStats
+    OfferFlusher -->|"drain & flush<br/>to SendPush"| CellOfferQueueManager
+    OfferFlusher -->|"SendPush RPC"| SendPush
 
     %% Metrics collection
-    PushServiceImpl -->|gauge: active_sessions<br/>counter: messages_sent| MicrometerRegistry
-    MessageStore -->|gauge: push_queue_depth| MicrometerRegistry
-    CellOfferQueueManager -->|gauge: offer_queue_depth<br/>counter: offers_*| MicrometerRegistry
-    ExposureLogger -->|counter: exposures| MicrometerRegistry
-    MicrometerRegistry -->|scrape| PrometheusExporter
+    PushServiceImpl -->|"gauge: active_sessions<br/>counter: messages_sent"| MicrometerRegistry
+    MessageStore -->|"gauge: push_queue_depth"| MicrometerRegistry
+    CellOfferQueueManager -->|"gauge: offer_queue_depth<br/>counter: offers_*"| MicrometerRegistry
+    ExposureLogger -->|"counter: exposures"| MicrometerRegistry
+    MicrometerRegistry -->|"scrape"| PrometheusExporter
 
     style PushGatewayClient fill:#e1f5ff
     style PushServiceImpl fill:#fff3e0
