@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: Cell Offer Dashboards
+    orgId: 1
+    folder: Cell Offer
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    options:
+      path: /var/lib/grafana/dashboards
