@@ -12,10 +12,18 @@ Then open:
 - Dashboard: **Cell-Offer Load Diagnosis**
 - Prometheus: http://localhost:9091
 
-By default, Prometheus scrapes:
+Grafana connects to Prometheus through the host-published port:
 
 ```text
-host.docker.internal:8080/actuator/prometheus
+http://host.docker.internal:9091
+```
+
+This avoids container-to-container network restrictions in GitHub Codespaces and dev containers.
+
+Prometheus scrapes the locally running Cell-Offer service at:
+
+```text
+http://host.docker.internal:8080/actuator/prometheus
 ```
 
 If Cell-Offer runs in a dev container, GitHub Codespace, or a different Docker network, override the target with its reachable IP:
@@ -28,7 +36,7 @@ docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' <ce
 make monitoring-up CELL_OFFER_TARGET=172.17.0.5:8080
 ```
 
-Verify the target:
+Verify the Prometheus target:
 
 ```bash
 curl -s 'http://localhost:9091/api/v1/targets' \
@@ -80,21 +88,30 @@ push.gateway.send-deadline-ms=250
      | grep 'cell_offer_'
    ```
 
-2. Confirm Prometheus can reach that endpoint:
+2. Confirm Prometheus is healthy:
+
+   ```bash
+   curl -s http://localhost:9091/-/ready
+   ```
+
+3. Confirm Grafana can reach Prometheus through the host-published port:
+
+   ```bash
+   docker exec -it cell-offer-grafana \
+     wget -qO- http://host.docker.internal:9091/-/ready
+   ```
+
+4. Confirm Prometheus can reach Cell-Offer:
 
    ```bash
    docker exec -it cell-offer-prometheus \
      wget -qO- http://host.docker.internal:8080/actuator/prometheus | head
    ```
 
-3. If this fails in a dev container or Codespace, start monitoring with the application container IP:
+5. If the Grafana datasource still times out, recreate the monitoring stack:
 
    ```bash
-   make monitoring-up CELL_OFFER_TARGET=<APP_CONTAINER_IP>:8080
+   make monitoring-down && make monitoring-up
    ```
 
-4. Restart Prometheus after changing the target:
-
-   ```bash
-   make monitoring-down && make monitoring-up CELL_OFFER_TARGET=<APP_CONTAINER_IP>:8080
-   ```
+6. If container-to-container DNS remains blocked in the Codespace, keep Grafana pointed at `http://host.docker.internal:9091`; this uses the host-published Prometheus port instead of the internal `prometheus:9090` address.
