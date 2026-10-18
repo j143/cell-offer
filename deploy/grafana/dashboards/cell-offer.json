@@ -1,0 +1,167 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_requests_seconds_count{uri=\"/cells/{cellId}/offers\"}[1m]))",
+          "legendFormat": "offer API RPS"
+        }
+      ],
+      "title": "Offer API throughput",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{uri=\"/cells/{cellId}/offers\"}[5m])) by (le))",
+          "legendFormat": "REST p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{uri=\"/cells/{cellId}/offers\"}[5m])) by (le))",
+          "legendFormat": "REST p99"
+        }
+      ],
+      "title": "Offer API latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 3,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(cell_offer_enqueue_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "enqueue p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(cell_offer_enqueue_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "enqueue p99"
+        }
+      ],
+      "title": "Queue enqueue latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 4,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(cell_offer_flush_cycle_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "flush cycle p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(cell_offer_flush_cycle_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "flush cycle p99"
+        },
+        {
+          "expr": "0.3",
+          "legendFormat": "300ms flush budget"
+        }
+      ],
+      "title": "Flush-cycle latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "id": 5,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(cell_offer_push_send_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "SendPush p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(cell_offer_push_send_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "SendPush p99"
+        },
+        {
+          "expr": "0.25",
+          "legendFormat": "250ms RPC deadline"
+        }
+      ],
+      "title": "PushGateway RPC latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "id": 6,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "sum(rate(cell_offer_push_send_failures_total[5m]))",
+          "legendFormat": "send failures/s"
+        },
+        {
+          "expr": "sum(rate(cell_offer_push_send_rejections_total[5m]))",
+          "legendFormat": "send rejections/s"
+        },
+        {
+          "expr": "sum(rate(offers_dropped_total[5m]))",
+          "legendFormat": "enqueue drops/s"
+        },
+        {
+          "expr": "sum(rate(offers_expired_total[5m]))",
+          "legendFormat": "expired/s"
+        }
+      ],
+      "title": "Delivery failures and shedding",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "id": 7,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "sum(offer_queue_depth)",
+          "legendFormat": "total queued offers"
+        },
+        {
+          "expr": "sum(rate(offers_enqueued_total[1m]))",
+          "legendFormat": "enqueued/s"
+        },
+        {
+          "expr": "sum(rate(offers_flushed_total[1m]))",
+          "legendFormat": "flushed/s"
+        }
+      ],
+      "title": "Queue backlog and reconciliation",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": ["cell-offer", "load-test"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "title": "Cell-Offer Load Diagnosis",
+  "uid": "cell-offer-load-diagnosis",
+  "version": 1
+}
