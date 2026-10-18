@@ -1,16 +1,22 @@
 SHELL := /bin/bash
 
+CELL_OFFER_TARGET ?= host.docker.internal:8080
+
 .PHONY: help monitoring-up monitoring-down loadtest loadtest-capacity test
 
 help:
-	@echo "make monitoring-up         Start Prometheus and Grafana"
-	@echo "make monitoring-down       Stop monitoring stack"
-	@echo "make loadtest              Run the brutal mixed-load k6 scenario"
-	@echo "make loadtest-capacity     Run a 500 RPS capacity probe"
-	@echo "make test                  Run Maven tests"
+	@echo "make monitoring-up                       Start Prometheus and Grafana"
+	@echo "make monitoring-up CELL_OFFER_TARGET=IP:8080"
+	@echo "make monitoring-down                     Stop monitoring stack"
+	@echo "make loadtest                            Run the brutal mixed-load k6 scenario"
+	@echo "make loadtest-capacity                   Run a 500 RPS capacity probe"
+	@echo "make test                                Run Maven tests"
 
 monitoring-up:
+	sed 's/__CELL_OFFER_TARGET__/$(CELL_OFFER_TARGET)/' \
+		deploy/prometheus.yml.template > deploy/prometheus.generated.yml
 	docker compose -f deploy/docker-compose.monitoring.yml up -d
+	@echo "Cell-Offer target: $(CELL_OFFER_TARGET)"
 	@echo "Grafana:      http://localhost:3000 (admin/admin)"
 	@echo "Prometheus:   http://localhost:9091"
 	@echo "Dashboard:    Cell-Offer Load Diagnosis"

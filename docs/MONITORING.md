@@ -12,11 +12,30 @@ Then open:
 - Dashboard: **Cell-Offer Load Diagnosis**
 - Prometheus: http://localhost:9091
 
-Prometheus scrapes the locally running Cell-Offer service at:
+By default, Prometheus scrapes:
 
 ```text
-http://host.docker.internal:8080/actuator/prometheus
+host.docker.internal:8080/actuator/prometheus
 ```
+
+If Cell-Offer runs in a dev container, GitHub Codespace, or a different Docker network, override the target with its reachable IP:
+
+```bash
+# Find the container IP
+docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' <cell-offer-container>
+
+# Start monitoring against that IP
+make monitoring-up CELL_OFFER_TARGET=172.17.0.5:8080
+```
+
+Verify the target:
+
+```bash
+curl -s 'http://localhost:9091/api/v1/targets' \
+  | jq '.data.activeTargets[] | {scrapeUrl, health, lastError}'
+```
+
+The `cell-offer` target must show `"health": "up"` before application counters appear in Grafana.
 
 Run the load test while the dashboard is open:
 
@@ -37,7 +56,7 @@ make loadtest-capacity
 | Offer API throughput | Is the intended arrival rate being served? |
 | Offer API latency | Are REST p95/p99 within the SLO? |
 | Queue enqueue latency | Is hot-cell admission becoming a bottleneck? |
-| Flush-cycle latency | Is the 300 ms flush budget being exceeded? |
+| Flush-cycle latency | Is the configured flush budget being exceeded? |
 | PushGateway RPC latency | Is the downstream `SendPush` call slow? |
 | Delivery failures and shedding | Are failures, rejections, drops, or expirations increasing? |
 | Queue backlog and reconciliation | Is ingress and flush throughput balanced? |
@@ -51,3 +70,31 @@ Use the new timers to determine whether the dominant delay is enqueue, the flush
 ```properties
 push.gateway.send-deadline-ms=250
 ```
+
+## Troubleshooting no metrics
+
+1. Confirm the application exposes metrics:
+
+   ```bash
+   curl -s http://localhost:8080/actuator/prometheus \
+     | grep 'cell_offer_'
+   ```
+
+2. Confirm Prometheus can reach that endpoint:
+
+   ```bash
+   docker exec -it cell-offer-prometheus \
+     wget -qO- http://host.docker.internal:8080/actuator/prometheus | head
+   ```
+
+3. If this fails in a dev container or Codespace, start monitoring with the application container IP:
+
+   ```bash
+   make monitoring-up CELL_OFFER_TARGET=<APP_CONTAINER_IP>:8080
+   ```
+
+4. Restart Prometheus after changing the target:
+
+   ```bash
+   make monitoring-down && make monitoring-up CELL_OFFER_TARGET=<APP_CONTAINER_IP>:8080
+   ```
