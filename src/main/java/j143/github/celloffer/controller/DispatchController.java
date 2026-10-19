@@ -45,19 +45,26 @@ public class DispatchController {
      *
      * @param cellId  the H3 cell identifier (path variable)
      * @param request body containing {@code driverId}, {@code riderId},
-     *                {@code priority}, and {@code ttlMillis}
-     * @return 202 Accepted with the generated {@code offerId}
+     *                {@code priority}, and a positive {@code ttlMillis}
+     * @return 202 Accepted with the generated {@code offerId}, 400 for invalid TTL,
+     *         or 429 if not admitted
      */
     @Operation(
         summary = "Enqueue a driver offer",
         description = "Push a driver offer into the bounded priority queue for a given H3 cell."
     )
     @ApiResponse(responseCode = "202", description = "Offer accepted, returns offerId")
+    @ApiResponse(responseCode = "400", description = "ttlMillis must be positive")
+    @ApiResponse(responseCode = "429", description = "Offer not admitted")
     @PostMapping("/{cellId}/offers")
     public ResponseEntity<Map<String, String>> enqueueOffer(
             @PathVariable String cellId,
             @RequestBody EnqueueOfferRequest request) {
 
+        if (request.getTtlMillis() <= 0) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "reason", "ttlMillis_must_be_positive"));
+        }
         String offerId = UUID.randomUUID().toString();
         Offer offer = Offer.builder()
                 .offerId(offerId)
@@ -69,7 +76,10 @@ public class DispatchController {
                 .ttl(Duration.ofMillis(request.getTtlMillis()))
                 .build();
 
-        queueManager.enqueue(offer);
+        if (!queueManager.enqueue(offer)) {
+            return ResponseEntity.status(429).body(Map.of(
+                    "offerId", offerId, "cellId", cellId, "reason", "not_admitted"));
+        }
         return ResponseEntity.accepted()
                 .body(Map.of("offerId", offerId, "cellId", cellId));
     }
