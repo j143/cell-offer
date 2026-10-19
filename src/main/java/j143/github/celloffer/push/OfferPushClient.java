@@ -6,6 +6,8 @@ import j143.github.push.proto.SendPushRequest;
 import j143.github.push.proto.SendPushResponse;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import jakarta.annotation.PostConstruct;
@@ -52,6 +54,9 @@ public class OfferPushClient {
             @Value("${push.gateway.grpc-port:9090}") int port,
             @Value("${push.gateway.send-deadline-ms:250}") long deadlineMs,
             MeterRegistry meterRegistry) {
+        if (deadlineMs < 1) {
+            throw new IllegalArgumentException("SendPush deadline must be positive");
+        }
         this.host = host;
         this.port = port;
         this.deadlineMs = deadlineMs;
@@ -85,8 +90,12 @@ public class OfferPushClient {
      * @param offerJson  JSON representation of the offer
      * @param ttlMillis  message time-to-live in milliseconds
      * @param priority   offer priority (higher = more urgent)
+     * @return gateway acceptance outcome; never a driver acknowledgement
      */
-    public void sendOffer(String driverId, String offerJson, long ttlMillis, int priority) {
+    public SendOutcome sendOffer(String driverId, String offerJson, long ttlMillis, int priority) {
+        if (ttlMillis <= 0) {
+            return SendOutcome.EXPIRED;
+        }
         try {
             SendPushRequest request = SendPushRequest.newBuilder()
                     .setUserId(driverId)
@@ -95,27 +104,35 @@ public class OfferPushClient {
                     .setPriority(priority)
                     .build();
 
-            sendTimer.record(() -> {
+            return sendTimer.record(() -> {
                 SendPushResponse response = blockingStub
-                        .withDeadlineAfter(deadlineMs, TimeUnit.MILLISECONDS)
+                        .withDeadlineAfter(Math.min(deadlineMs, ttlMillis), TimeUnit.MILLISECONDS)
                         .sendPush(request);
 
                 if (response.getSuccess()) {
                     log.debug("[OfferPushClient] Offer sent to PushGateway: driverId={}", driverId);
+                    return SendOutcome.ACCEPTED;
                 } else {
                     meterRegistry.counter(
                             "cell_offer_push_send_rejections_total",
-                            "reason", response.getReason()).increment();
+                            "reason", "gateway_rejected").increment();
                     log.warn("[OfferPushClient] PushGateway rejected offer for driverId={}: {}",
                             driverId, response.getReason());
+                    return SendOutcome.REJECTED;
                 }
             });
+        } catch (StatusRuntimeException e) {
+            meterRegistry.counter("cell_offer_push_send_failures_total",
+                    "error", Status.fromThrowable(e).getCode().name()).increment();
+            // The server may have accepted a request before the transport failed.
+            return SendOutcome.AMBIGUOUS_FAILURE;
         } catch (Exception e) {
             meterRegistry.counter(
                     "cell_offer_push_send_failures_total",
                     "error", e.getClass().getSimpleName()).increment();
             log.error("[OfferPushClient] Failed to send offer to PushGateway for driverId={}: {}",
                     driverId, e.getMessage());
+            return SendOutcome.INVALID;
         }
     }
 }

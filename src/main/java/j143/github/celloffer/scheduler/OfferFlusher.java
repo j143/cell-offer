@@ -27,11 +27,14 @@ public class OfferFlusher {
     private final CellOfferQueueManager queueManager;
     private final OfferPushClient       pushClient;
     private final Timer                 flushCycleTimer;
+    private final BoundedOfferDispatcher dispatcher;
 
     public OfferFlusher(
             CellOfferQueueManager queueManager,
             OfferPushClient pushClient,
-            MeterRegistry meterRegistry) {
+            MeterRegistry meterRegistry,
+            BoundedOfferDispatcher dispatcher) {
+        this.dispatcher = dispatcher;
         this.queueManager = queueManager;
         this.pushClient   = pushClient;
         this.flushCycleTimer = Timer.builder("cell_offer_flush_cycle_duration")
@@ -44,8 +47,8 @@ public class OfferFlusher {
      *
      * <p>For every registered cell it:
      * <ol>
-     *   <li>Calls {@link CellOfferQueueManager#flushDueOffers} to drain non-expired offers.</li>
-     *   <li>Forwards each flushed offer to PushGateway via {@link OfferPushClient#sendOffer}.</li>
+     *   <li>Reserves bounded dispatch capacity before selecting live offers fairly.</li>
+     *   <li>Hands ownership to workers; the scheduler never waits on PushGateway.</li>
      * </ol>
      */
     @Scheduled(fixedDelayString = "${cell.offer.flush-interval-ms:300}")
@@ -54,16 +57,7 @@ public class OfferFlusher {
     }
 
     private void flushOnce() {
-        Instant now = Instant.now();
-        for (String cellId : queueManager.getCellIds()) {
-            List<Offer> offers = queueManager.flushDueOffers(cellId, now);
-            if (!offers.isEmpty()) {
-                log.info("[FLUSH] cell={} flushing {} offer(s)", cellId, offers.size());
-                for (Offer offer : offers) {
-                    sendToRamenSink(offer);
-                }
-            }
-        }
+        dispatcher.tick();
     }
 
     /**

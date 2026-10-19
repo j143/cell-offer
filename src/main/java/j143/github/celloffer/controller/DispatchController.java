@@ -46,7 +46,7 @@ public class DispatchController {
      * @param cellId  the H3 cell identifier (path variable)
      * @param request body containing {@code driverId}, {@code riderId},
      *                {@code priority}, and {@code ttlMillis}
-     * @return 202 Accepted with the generated {@code offerId}
+     * @return 202 Accepted with the generated {@code offerId}, or 429 if not admitted
      */
     @Operation(
         summary = "Enqueue a driver offer",
@@ -69,7 +69,10 @@ public class DispatchController {
                 .ttl(Duration.ofMillis(request.getTtlMillis()))
                 .build();
 
-        queueManager.enqueue(offer);
+        if (!queueManager.enqueue(offer)) {
+            return ResponseEntity.status(429).body(Map.of(
+                    "offerId", offerId, "cellId", cellId, "reason", "not_admitted"));
+        }
         return ResponseEntity.accepted()
                 .body(Map.of("offerId", offerId, "cellId", cellId));
     }

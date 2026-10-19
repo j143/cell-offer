@@ -2,6 +2,7 @@ package j143.github.celloffer.queue;
 
 import j143.github.celloffer.model.CellQueueStats;
 import j143.github.celloffer.model.Offer;
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.Timer;
@@ -50,6 +51,12 @@ public class CellOfferQueueManager {
     private final int maxQueueSize;
     private final MeterRegistry meterRegistry;
     private final Timer enqueueTimer;
+    private final Counter admitted;
+    private final Counter rejected;
+    private final Counter evicted;
+    private final Counter duplicate;
+    private final Counter transferred;
+    private final Counter expired;
 
     /** cell-id → sorted offer set (head = best, tail = worst) */
     private final ConcurrentHashMap<String, TreeSet<Offer>> queues =
@@ -62,8 +69,17 @@ public class CellOfferQueueManager {
     public CellOfferQueueManager(
             @Value("${cell.offer.max-queue-size:100}") int maxQueueSize,
             MeterRegistry meterRegistry) {
+        if (maxQueueSize < 1) {
+            throw new IllegalArgumentException("maxQueueSize must be positive");
+        }
         this.maxQueueSize = maxQueueSize;
         this.meterRegistry = meterRegistry;
+        this.admitted = meterRegistry.counter("cell_offer_admitted_total");
+        this.rejected = meterRegistry.counter("cell_offer_rejected_total");
+        this.evicted = meterRegistry.counter("cell_offer_evicted_total");
+        this.duplicate = meterRegistry.counter("cell_offer_duplicate_total");
+        this.transferred = meterRegistry.counter("cell_offer_transferred_total");
+        this.expired = meterRegistry.counter("cell_offer_queue_expired_total");
         this.enqueueTimer = Timer.builder("cell_offer_enqueue_duration")
                 .description("Time spent admitting an offer into a cell queue")
                 .register(meterRegistry);
@@ -85,12 +101,13 @@ public class CellOfferQueueManager {
      * </ul>
      *
      * @param offer the offer to enqueue (must not be null)
+     * @return true if admitted; false for a duplicate or capacity rejection
      */
-    public void enqueue(Offer offer) {
-        enqueueTimer.record(() -> enqueueInternal(offer));
+    public boolean enqueue(Offer offer) {
+        return enqueueTimer.record(() -> enqueueInternal(offer));
     }
 
-    private void enqueueInternal(Offer offer) {
+    private boolean enqueueInternal(Offer offer) {
         String cellId = offer.getCellId();
         TreeSet<Offer> queue = queues.computeIfAbsent(
                 cellId, k -> new TreeSet<>(OFFER_ORDER));
@@ -100,16 +117,26 @@ public class CellOfferQueueManager {
                     "offer_queue_depth",
                     List.of(Tag.of("cellId", k)),
                     queue,
-                    TreeSet::size);
+                    value -> {
+                        synchronized (value) {
+                            return value.size();
+                        }
+                    });
             return s;
         });
 
         synchronized (queue) {
+            if (queue.contains(offer)) {
+                duplicate.increment();
+                return false;
+            }
             if (queue.size() < maxQueueSize) {
                 queue.add(offer);
                 stats.incrementEnqueued();
+                admitted.increment();
                 meterRegistry.counter("offers_enqueued_total", "cellId", cellId).increment();
                 log.debug("Enqueued offer {} for cell {}", offer.getOfferId(), cellId);
+                return true;
             } else {
                 // last() is O(log n) – the lowest-priority (worst) offer in the set
                 Offer worst = queue.last();
@@ -117,16 +144,21 @@ public class CellOfferQueueManager {
                     // Incoming offer is better – evict the worst (O(log n))
                     queue.remove(worst);
                     queue.add(offer);
+                    evicted.increment();
+                    admitted.increment();
                     stats.incrementEnqueued();
                     meterRegistry.counter("offers_enqueued_total", "cellId", cellId).increment();
                     log.debug("Evicted low-priority offer {} to make room for {}",
                             worst.getOfferId(), offer.getOfferId());
+                    return true;
                 } else {
                     // Incoming offer is not better – drop it
                     stats.incrementDroppedOnEnqueue();
+                    rejected.increment();
                     meterRegistry.counter("offers_dropped_total", "cellId", cellId).increment();
                     log.debug("Dropped offer {} for cell {} (queue full, priority too low)",
                             offer.getOfferId(), cellId);
+                    return false;
                 }
             }
         }
@@ -160,14 +192,46 @@ public class CellOfferQueueManager {
         for (Offer offer : drained) {
             if (offer.isExpired(now)) {
                 stats.incrementExpired();
+                expired.increment();
                 meterRegistry.counter("offers_expired_total", "cellId", cellId).increment();
                 log.debug("Discarding expired offer {} for cell {}", offer.getOfferId(), cellId);
             } else {
                 flushed.add(offer);
                 stats.incrementFlushed();
+                transferred.increment();
             }
         }
         return flushed;
+    }
+
+    /**
+     * Transfers at most one live offer after the dispatcher has reserved capacity.
+     * Expired heads are removed under the same lock. This method performs no I/O.
+     *
+     * @param cellId cell from which to select the highest-priority live offer
+     * @param now reference time for expiration
+     * @return selected offer, or null when no live offer remains
+     */
+    public Offer pollForDispatch(String cellId, Instant now) {
+        TreeSet<Offer> queue = queues.get(cellId);
+        if (queue == null) {
+            return null;
+        }
+        synchronized (queue) {
+            while (!queue.isEmpty()) {
+                Offer offer = queue.pollFirst();
+                if (!now.isBefore(offer.getCreatedAt().plus(offer.getTtl()))) {
+                    getStats(cellId).incrementExpired();
+                    expired.increment();
+                    meterRegistry.counter("offers_expired_total", "cellId", cellId).increment();
+                } else {
+                    getStats(cellId).incrementFlushed();
+                    transferred.increment();
+                    return offer;
+                }
+            }
+            return null;
+        }
     }
 
     /** Returns all cell IDs that currently have a queue registered. */
@@ -186,7 +250,12 @@ public class CellOfferQueueManager {
     /** Returns the current depth of the queue for the given cell (0 if unknown). */
     public int getQueueDepth(String cellId) {
         TreeSet<Offer> queue = queues.get(cellId);
-        return queue == null ? 0 : queue.size();
+        if (queue == null) {
+            return 0;
+        }
+        synchronized (queue) {
+            return queue.size();
+        }
     }
 
     /**
