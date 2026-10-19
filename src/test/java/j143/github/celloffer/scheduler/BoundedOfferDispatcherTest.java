@@ -56,9 +56,7 @@ class BoundedOfferDispatcherTest {
 
     @Test
     void queuedWorkConsumesCapacityBeforeMoreOffersAreRemoved() {
-        for (String cell : List.of("a", "b", "c")) {
-            queues.enqueue(offer(cell, cell, 1));
-        }
+        for (String cell : List.of("a", "b", "c")) queues.enqueue(offer(cell, cell, 1));
         dispatcher.tick();
         dispatcher.tick();
         assertThat(executor.tasks).hasSize(2);
@@ -66,8 +64,9 @@ class BoundedOfferDispatcherTest {
         assertThat(registry.get("cell_dispatch_pending").gauge().value()).isEqualTo(2);
         verifyNoInteractions(client);
         executor.runNext();
-        dispatcher.tick();
+        // Completion alone must select c: deliberately no dispatcher.tick here.
         assertThat(queues.getQueueDepth("c")).isZero();
+        assertThat(executor.tasks).hasSize(2);
         executor.runAll();
         assertThat(terminal("accepted")).isEqualTo(3);
     }
@@ -82,7 +81,8 @@ class BoundedOfferDispatcherTest {
         var order = inOrder(client);
         order.verify(client).sendOffer(eq("high"), anyString(), anyLong(), eq(10));
         order.verify(client).sendOffer(eq("cold"), anyString(), anyLong(), eq(1));
-        assertThat(queues.getQueueDepth("a")).isEqualTo(1);
+        order.verify(client).sendOffer(eq("low"), anyString(), anyLong(), eq(1));
+        assertThat(queues.getQueueDepth("a")).isZero();
     }
 
     @Test
@@ -95,8 +95,7 @@ class BoundedOfferDispatcherTest {
         dispatcher.tick();
         executor.runAll();
         assertThat(terminal("accepted")).isEqualTo(1);
-        assertThat(registry.get("cell_dispatch_submission_rejected_total").counter().count())
-                .isEqualTo(1);
+        assertThat(registry.get("cell_dispatch_submission_rejected_total").counter().count()).isEqualTo(1);
     }
 
     @Test
@@ -115,8 +114,7 @@ class BoundedOfferDispatcherTest {
         dispatcher.tick();
         clock.advance(2000);
         executor.runAll();
-        verify(client).sendOffer(eq("driver\"quoted"),
-                contains("driver\\\"quoted"), eq(8000L), eq(1));
+        verify(client).sendOffer(eq("driver\"quoted"), contains("driver\\\"quoted"), eq(8000L), eq(1));
     }
 
     @Test
@@ -133,8 +131,7 @@ class BoundedOfferDispatcherTest {
         dispatcher.tick();
         executor.runAll();
         verify(client, times(2)).sendOffer(anyString(), anyString(), anyLong(), anyInt());
-        assertThat(registry.get("cell_dispatch_retry_exhausted_total").counter().count())
-                .isEqualTo(1);
+        assertThat(registry.get("cell_dispatch_retry_exhausted_total").counter().count()).isEqualTo(1);
         assertThat(registry.get("cell_dispatch_pending").gauge().value()).isZero();
     }
 
@@ -191,15 +188,20 @@ class BoundedOfferDispatcherTest {
 
     @Test
     void queueEvictionAndDuplicateAccountingReconcile() {
-        CellOfferQueueManager small = new CellOfferQueueManager(1, new SimpleMeterRegistry());
-        Offer low = offer("low", "a", 1);
-        Offer high = offer("high", "a", 10);
-        assertThat(small.enqueue(low)).isTrue();
-        assertThat(small.enqueue(high)).isTrue();
-        assertThat(small.enqueue(high)).isFalse();
-        assertThat(small.enqueue(low)).isFalse();
-        assertThat(small.pollForDispatch("a", clock.instant()).getOfferId()).isEqualTo("high");
-        assertThat(small.getQueueDepth("a")).isZero();
+        try (SimpleMeterRegistry meters = new SimpleMeterRegistry()) {
+            CellOfferQueueManager small = new CellOfferQueueManager(1, meters);
+            Offer low = offer("low", "a", 1);
+            Offer high = offer("high", "a", 10);
+            assertThat(small.enqueue(low)).isTrue();
+            assertThat(small.enqueue(high)).isTrue();
+            assertThat(small.enqueue(high)).isFalse();
+            assertThat(small.enqueue(low)).isFalse();
+            assertThat(small.pollForDispatch("a", clock.instant()).getOfferId()).isEqualTo("high");
+            assertThat(meters.get("cell_offer_admitted_total").counter().count()).isEqualTo(2);
+            assertThat(meters.get("cell_offer_evicted_total").counter().count()).isEqualTo(1);
+            assertThat(meters.get("cell_offer_transferred_total").counter().count()).isEqualTo(1);
+            assertThat(meters.get("cell_offer_queued").gauge().value()).isZero();
+        }
     }
 
     @Test
@@ -210,13 +212,11 @@ class BoundedOfferDispatcherTest {
         var entered = new java.util.concurrent.CountDownLatch(1);
         var release = new java.util.concurrent.CountDownLatch(1);
         var realPool = java.util.concurrent.Executors.newFixedThreadPool(1);
-        dispatcher = new BoundedOfferDispatcher(queues, client, new ObjectMapper(),
-                registry, clock, realPool, 2, 2, 100, 1000, false, 1000, bound -> bound);
+        dispatcher = new BoundedOfferDispatcher(queues, client, new ObjectMapper(), registry,
+                clock, realPool, 2, 2, 100, 1000, false, 1000, bound -> bound);
         when(client.sendOffer(anyString(), anyString(), anyLong(), anyInt())).thenAnswer(call -> {
             entered.countDown();
-            if (!release.await(5, TimeUnit.SECONDS)) {
-                throw new AssertionError("worker was not released");
-            }
+            if (!release.await(5, TimeUnit.SECONDS)) throw new AssertionError("worker was not released");
             return SendOutcome.ACCEPTED;
         });
         try {
@@ -257,7 +257,7 @@ class BoundedOfferDispatcherTest {
             tasks.add(command);
         }
         void runNext() { tasks.remove().run(); }
-        void runAll() { while (!tasks.isEmpty()) { runNext(); } }
+        void runAll() { while (!tasks.isEmpty()) runNext(); }
         @Override public void shutdown() { stopped = true; }
         @Override public List<Runnable> shutdownNow() {
             stopped = true;
@@ -267,8 +267,6 @@ class BoundedOfferDispatcherTest {
         }
         @Override public boolean isShutdown() { return stopped; }
         @Override public boolean isTerminated() { return stopped && tasks.isEmpty(); }
-        @Override public boolean awaitTermination(long timeout, TimeUnit unit) {
-            return isTerminated();
-        }
+        @Override public boolean awaitTermination(long timeout, TimeUnit unit) { return isTerminated(); }
     }
 }

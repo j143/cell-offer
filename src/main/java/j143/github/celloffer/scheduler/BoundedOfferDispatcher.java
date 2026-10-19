@@ -19,7 +19,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -138,8 +137,9 @@ public class BoundedOfferDispatcher {
     }
 
     /**
-     * Makes bounded round-robin visits per tick, taking one offer per visit
-     * and resuming after the previous cell. Ownership is reserved before poll.
+     * Selects from active cells in cyclic order without historical-cell scans.
+     * Called by the periodic fallback and worker completions; neither waits on RPCs.
+     * Ownership is reserved under the lock before polling each cell.
      */
     public void tick() {
         synchronized (lock) {
@@ -152,30 +152,17 @@ public class BoundedOfferDispatcher {
                     submit(work);
                 }
             }
-            List<String> cells = new ArrayList<>(queues.getCellIds());
-            cells.sort(String::compareTo);
-            if (cells.isEmpty()) {
-                return;
-            }
-            int start = 0;
-            if (lastCell != null) {
-                int pos = java.util.Collections.binarySearch(cells, lastCell);
-                start = pos >= 0 ? (pos + 1) % cells.size() : (-pos - 1) % cells.size();
-            }
-            long visits = (long) cells.size() + capacity;
-            int emptyVisits = 0;
-            for (long i = 0; i < visits && owned.size() < capacity
-                    && emptyVisits < cells.size(); i++) {
-                String cell = cells.get((int) ((start + i) % cells.size()));
+            long visits = (long) queues.getActiveCellCount() + capacity;
+            for (long i = 0; i < visits && owned.size() < capacity; i++) {
+                String cell = queues.nextActiveCell(lastCell);
+                if (cell == null) {
+                    break;
+                }
                 lastCell = cell;
-                // lock excludes selection/completion and reserves the free slot
-                // throughout poll; no other selector can consume this capacity.
-                Offer offer = queues.pollForDispatch(cell, now);
+                Offer offer = queues.pollForDispatch(cell, clock.instant());
                 if (offer == null) {
-                    emptyVisits++;
                     continue;
                 }
-                emptyVisits = 0;
                 Work work = new Work(offer);
                 owned.put(work, Boolean.TRUE);
                 creationTimes.merge(offer.getCreatedAt(), 1, Integer::sum);
@@ -254,6 +241,9 @@ public class BoundedOfferDispatcher {
                 retries.increment();
             }
         }
+        // Capacity release replenishes work immediately; no extra executor/thread.
+        // The closing check in tick prevents shutdown from starting new work.
+        tick();
     }
 
     private long remainingMs(Offer offer) {
